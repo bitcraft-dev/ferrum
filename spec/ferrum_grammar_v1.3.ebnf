@@ -1,0 +1,876 @@
+(* ============================================================ *)
+(*  Ferrum — Formal EBNF Grammar                         *)
+(*  Specification version: 1.3                                 *)
+(*                                                             *)
+(*  Convention:                                                *)
+(*    =      rule definition                                   *)
+(*    |      alternation                                       *)
+(*    { }    zero or more repetitions                          *)
+(*    [ ]    optional (zero or one)                            *)
+(*    ( )    grouping                                          *)
+(*    "..."  terminal string (matched case-insensitively)      *)
+(*    UPPER  lexical token rule                                *)
+(*                                                             *)
+(*  CASE POLICY (see Lexical Rules section for full details):  *)
+(*    Keywords   — case-insensitive, normalised to uppercase   *)
+(*    Identifiers — case-insensitive, original spelling kept   *)
+(*    Strings    — case-sensitive (content between " " exact)  *)
+(*                                                             *)
+(*  Whitespace and comments are consumed between every token.  *)
+(*  The WS and COMMENT rules below describe them; parsers      *)
+(*  should skip them implicitly between every rule.            *)
+(* ============================================================ *)
+
+
+(* ------------------------------------------------------------ *)
+(*  TOP-LEVEL PROGRAM                                           *)
+(* ------------------------------------------------------------ *)
+
+program = [ config_section ]
+          [ define_sections ]
+          [ create_sections ]
+          [ declare_sections ]
+          { function_def }
+          run_section
+        ;
+
+
+(* ------------------------------------------------------------ *)
+(*  CONFIG SECTION                                              *)
+(* ------------------------------------------------------------ *)
+
+config_section = "CONFIG" "{" { config_item } "}"
+               ;
+
+config_item = CONFIG_KEY "=" config_value
+            ;
+
+(*
+ * CONFIG_KEY is one of the recognised identifiers:
+ *   TARGET | CLOCK_SPEED | SERIAL | DEFAULT_PULL_UP |
+ *   DEBOUNCE_MS | OPTIMIZE | DEBUG
+ * Parsers may treat CONFIG_KEY as IDENTIFIER and validate
+ * the key name in a semantic pass.
+ *)
+
+config_value = STRING
+             | INTEGER_LIT
+             | CLOCK_LIT        (* e.g. 64MHZ *)
+             | BOOLEAN_LIT
+             ;
+
+(*
+ * CLOCK_LIT — system clock frequency value.
+ * The MHZ suffix is matched case-insensitively (64mhz = 64MHZ).
+ * Normalised to uppercase MHZ internally.
+ *)
+CLOCK_LIT = DIGITS "MHZ"    (* lexer accepts any case *)
+          ;
+
+
+(* ------------------------------------------------------------ *)
+(*  DEFINE SECTION                                              *)
+(* ------------------------------------------------------------ *)
+
+define_sections = inline_define
+                | block_define
+                ;
+
+inline_define = "DEFINE" definition_item
+              ;  (* exactly one definition_item, no comma allowed *)
+
+block_define = "DEFINE" "{" definition_list "}"
+             ;
+
+definition_list = definition_item { "," definition_item } [ "," ]
+                ;
+
+definition_item = IDENTIFIER "AS" device_spec
+                ;
+
+device_spec = interface_spec                              (* simple device    *)
+            | "{" interface_spec { "," interface_spec } "}"  (* composite device *)
+            ;
+
+interface_spec = INTERFACE_TYPE [ QUALIFIER ]
+               ;
+
+INTERFACE_TYPE = "INPUT"
+               | "OUTPUT"
+               | "ANALOG_INPUT"
+               | "PWM"
+               | "DISPLAY"
+               | "PULSE"
+               ;
+
+QUALIFIER = "BRIGHTNESS" | "SPEED" | "ANGLE"
+          | "RED"        | "GREEN" | "BLUE"
+          | "LCD"        | "OLED"
+          | "TRIGGER"    | "ECHO"
+          | "ENABLE"
+          ;
+
+
+(* ------------------------------------------------------------ *)
+(*  CREATE SECTION                                              *)
+(* ------------------------------------------------------------ *)
+
+create_sections = inline_create
+                | block_create
+                ;
+
+inline_create = "CREATE" creation_item
+              ;  (* exactly one creation_item, no comma allowed *)
+
+block_create = "CREATE" "{" creation_list "}"
+             ;
+
+creation_list = creation_item { "," creation_item } [ "," ]
+              ;
+
+creation_item = IDENTIFIER instance_name "ON" pin_spec ...
+instance_name = IDENTIFIER
+
+pin_spec = "PIN" INTEGER_LIT
+         | "{" pin_assignment { "," pin_assignment } "}"
+         ;
+
+(*
+ * Three pin assignment forms:
+ *   Positional : PIN 3
+ *   Named      : output: PIN 3
+ *   Mixed      : PIN 3 OUTPUT   (disambiguation by interface name)
+ *)
+pin_assignment = [ IDENTIFIER ":" ] "PIN" INTEGER_LIT [ IDENTIFIER ]
+               ;
+
+pull_config = "PULL" ( "UP" | "DOWN" )
+            ;
+
+init_block = "INIT" init_body
+           ;
+
+init_body = init_value                                     (* single value — simple device *)
+          | "{" named_init_value { "," named_init_value } "}"  (* composite device         *)
+          ;
+
+named_init_value = [ IDENTIFIER ":" ] init_value
+                 ;
+
+init_value = "HIGH" | "LOW"                (* OUTPUT  *)
+           | DECIMAL_LIT                   (* PWM     *)
+           | STRING                        (* DISPLAY *)
+           | INTEGER_LIT                   (* DISPLAY *)
+           ;
+
+
+(* ------------------------------------------------------------ *)
+(*  DECLARE SECTION                                             *)
+(* ------------------------------------------------------------ *)
+
+declare_sections = inline_declare
+                 | block_declare
+                 ;
+
+inline_declare = "DECLARE" declaration_item
+               ;  (* exactly one declaration_item, no comma allowed *)
+
+block_declare = "DECLARE" "{" declaration_list "}"
+              ;
+
+declaration_list = declaration_item { "," declaration_item } [ "," ]
+                 ;
+
+declaration_item = constant_decl
+                 | variable_decl
+                 ;
+
+constant_decl = "CONSTANT" data_type IDENTIFIER "=" literal
+              ;
+
+variable_decl = data_type [ "[" INTEGER_LIT "]" ] IDENTIFIER [ "INIT" init_expr ]
+              ;
+
+init_expr = literal
+          | "[" literal { "," literal } "]"    (* array initialiser *)
+          ;
+
+(*
+ * data_type keywords are matched case-insensitively by the lexer.
+ * Authors may write "integer", "Integer", or "INTEGER" — all identical.
+ * The lexer normalises to the canonical uppercase form internally.
+ *)
+data_type = "INTEGER"
+          | "DECIMAL"
+          | "PERCENTAGE"
+          | "BOOLEAN"
+          | "STRING"
+          | "BYTE"
+          ;
+
+
+(* ------------------------------------------------------------ *)
+(*  FUNCTION SECTION                                            *)
+(* ------------------------------------------------------------ *)
+
+function_def = "FUNCTION" IDENTIFIER [ param_list ] "{" { statement } [ return_stmt ] "}"
+             ;
+
+param_list = param { "," param }
+           ;
+
+param = data_type ":" IDENTIFIER            (* data parameter              *)
+      | ownership IDENTIFIER ":" IDENTIFIER (* device parameter            *)
+      ;
+
+ownership = "GIVE"
+          | "LEND"
+          | "BORROW"
+          ;
+
+return_stmt = "RETURN" [ expression ]    (* expression absent → void return *)
+            ;
+
+
+(* ------------------------------------------------------------ *)
+(*  RUN SECTION                                                 *)
+(* ------------------------------------------------------------ *)
+
+run_section = "RUN" "{" { run_item } "}"
+            ;
+
+(*
+ * run_item allows EVERY at the top level and EVERY inside an IF
+ * at the top level (conditional scheduling). EVERY is NOT valid
+ * inside loop or statement-level blocks — enforced semantically.
+ *)
+run_item = every_block
+         | top_if_block
+         | loop_block
+         | statement
+         ;
+
+every_block = "EVERY" duration "{" { statement } "}"
+            ;
+
+(*
+ * top_if_block is an IF at the RUN top level.
+ * Its body may contain EVERY blocks (unlike statement-level IF).
+ *)
+top_if_block = "IF" expression "{" { run_item } "}" [ "ELSE" "{" { run_item } "}" ]
+             ;
+
+loop_block = "LOOP" "{" { statement } "}"
+           ;
+
+duration = INTEGER_LIT ( "ms" | "s" )
+         ;
+
+
+(* ------------------------------------------------------------ *)
+(*  STATEMENTS                                                  *)
+(* ------------------------------------------------------------ *)
+
+statement = assignment_stmt
+          | set_stmt
+          | turn_stmt
+          | toggle_stmt
+          | print_stmt
+          | void_call_stmt
+          | delay_stmt
+          | if_stmt
+          | for_stmt
+          | break_stmt
+          | continue_stmt
+          | inline_declare_stmt
+          ;
+
+assignment_stmt = IDENTIFIER "=" expression
+                ;
+
+(* QUALIFIER disambiguation is enforced semantically *)
+
+set_stmt = "SET" IDENTIFIER [ QUALIFIER ] expression
+         ;
+
+turn_stmt = "TURN" IDENTIFIER ( "HIGH" | "LOW" )
+          ;
+
+(*
+ * TURN for composite devices with ENABLE qualifier:
+ *   TURN pump ENABLE HIGH
+ * The optional QUALIFIER is captured by the [ QUALIFIER ] slot.
+ *)
+
+toggle_stmt = "TOGGLE" IDENTIFIER
+            ;
+
+print_stmt = "PRINT" expression
+           ;
+
+(*
+ * Function call as a statement (void or discarded return).
+ * Call with a captured return value uses inline_declare_stmt.
+ *)
+void_call_stmt = "CALL" IDENTIFIER [ call_arg_list ]
+               ;
+
+delay_stmt = "DELAY" duration
+           ;
+
+if_stmt = "IF" expression "{" { statement } "}"
+          [ "ELSE" ( "{" { statement } "}" | if_stmt ) ]
+        ;
+
+for_stmt = "FOR" IDENTIFIER "IN" for_iterator "{" { statement } "}"
+         ;
+
+for_iterator = range_expr
+             | expression        (* array variable *)
+             ;
+
+range_expr = "RANGE" expression "," expression
+           ;
+
+break_stmt = "BREAK"
+           ;
+
+continue_stmt = "CONTINUE"
+              ;
+
+(*
+ * Block-scoped variable declaration inside any statement block.
+ * Captured-return call form is also handled here.
+ *)
+inline_declare_stmt = "DECLARE" data_type [ "[" INTEGER_LIT "]" ] IDENTIFIER
+                      ( "INIT" init_expr | "=" call_expression )
+                    ;
+
+
+(* ------------------------------------------------------------ *)
+(*  CALL ARGUMENTS                                              *)
+(*                                                              *)
+(*  A call argument list consists of arguments separated by     *)
+(*  commas. Each argument is either a plain expression (data)   *)
+(*  or an owned/borrowed device passed with an ownership        *)
+(*  keyword.                                                    *)
+(*                                                              *)
+(*  Examples:                                                   *)
+(*    CALL run_blink GIVE status_led                           *)
+(*    CALL add 5, 3                                            *)
+(*    CALL react_to_press GIVE status_led, LEND mode_btn       *)
+(*    CALL log_and_blink "starting", BORROW status_led         *)
+(* ------------------------------------------------------------ *)
+
+call_arg_list = call_arg { "," call_arg }
+              ;
+
+call_arg = ownership IDENTIFIER    (* device argument: GIVE led, LEND btn … *)
+         | expression              (* data argument: 42, moisture, "msg" … *)
+         ;
+
+
+(* ------------------------------------------------------------ *)
+(*  EXPRESSIONS                                                 *)
+(*                                                              *)
+(*  Precedence (lowest to highest):                            *)
+(*    0  OR                                                    *)
+(*    1  AND                                                    *)
+(*    2  == !=                                                  *)
+(*    3  > < >= <=  IS  IS NOT                                  *)
+(*    4  + -                                                    *)
+(*    5  * /                                                    *)
+(*    6  NOT -  (unary)                                         *)
+(*    7  primary                                                *)
+(* ------------------------------------------------------------ *)
+
+expression = or_expr
+           ;
+
+or_expr = and_expr { "OR" and_expr }
+        ;
+
+and_expr = equality_expr { "AND" equality_expr }
+         ;
+
+equality_expr = comparison_expr { ( "==" | "!=" ) comparison_expr }
+              ;
+
+comparison_expr = additive_expr { comparison_op additive_expr }
+                ;
+
+comparison_op = ">"  | "<"  | ">=" | "<="
+              | "IS" "NOT"              (* two-token compound — IS followed by NOT *)
+              | "IS"
+              ;
+
+additive_expr = multiplicative_expr { ( "+" | "-" ) multiplicative_expr }
+              ;
+
+multiplicative_expr = unary_expr { ( "*" | "/" ) unary_expr }
+                    ;
+
+unary_expr = "NOT" unary_expr
+           | "-"   unary_expr
+           | primary_expr
+           ;
+
+primary_expr = literal
+             | read_expr
+             | call_expression
+             | if_expr
+             | "(" expression ")"
+             | IDENTIFIER
+             ;
+
+read_expr = "READ"         IDENTIFIER    (* INPUT → HIGH/LOW, ANALOG_INPUT → Integer *)
+          | "READ_PERCENT" IDENTIFIER    (* ANALOG_INPUT only → Percentage            *)
+          ;
+
+(*
+ * call_expression: CALL used where a return value is expected.
+ * In statement position, void_call_stmt or inline_declare_stmt is used instead.
+ *)
+call_expression = "CALL" IDENTIFIER [ call_arg_list ]
+                ;
+
+(*
+ * Inline IF expression — both branches required, must return same type.
+ *)
+if_expr = "IF" expression "{" expression "}" "ELSE" "{" expression "}"
+        ;
+
+
+(* ------------------------------------------------------------ *)
+(*  LITERALS                                                    *)
+(* ------------------------------------------------------------ *)
+
+literal = INTEGER_LIT
+        | DECIMAL_LIT
+        | STRING
+        | BOOLEAN_LIT
+        | "HIGH"
+        | "LOW"
+        ;
+
+BOOLEAN_LIT = "TRUE" | "FALSE"
+            ;
+
+
+(* ============================================================ *)
+(*  LEXICAL RULES (TOKENS)                                      *)
+(*                                                              *)
+(*  These rules define the token stream fed to the parser.     *)
+(*  Lexical rules are written in uppercase by convention.      *)
+(*                                                             *)
+(*  ── CASE SENSITIVITY POLICY ──────────────────────────────  *)
+(*                                                             *)
+(*  KEYWORDS (all reserved words, interface types, qualifiers, *)
+(*  ownership keywords, type names, boolean literals):         *)
+(*    • Matched case-insensitively by the lexer.               *)
+(*    • Normalised to UPPERCASE before token emission.         *)
+(*    • Terminal strings in this grammar are written in        *)
+(*      UPPERCASE and represent the normalised form.           *)
+(*    • Authors may write in any case:                         *)
+(*        loop = Loop = LOOP = lOoP  →  token LOOP            *)
+(*        integer = Integer = INTEGER  →  token INTEGER        *)
+(*        give = Give = GIVE  →  token GIVE                    *)
+(*                                                             *)
+(*  IDENTIFIERS (device type names, instance names, variables, *)
+(*  function names — anything the author defines):             *)
+(*    • Matched case-insensitively for all comparisons.        *)
+(*    • Original spelling is PRESERVED for display in error    *)
+(*      messages and diagnostics (case-preserving).            *)
+(*    • Internally the lexer stores two values per identifier  *)
+(*      token: the original_text (as written) and a           *)
+(*      normalised_key = lowercase(original_text) used for     *)
+(*      all equality checks.                                   *)
+(*    • Button, button, BUTTON → same identifier, displayed    *)
+(*      as whatever the author first wrote.                    *)
+(*                                                             *)
+(*  STRING LITERALS (content between double quotes):           *)
+(*    • Always case-sensitive. The exact bytes are preserved.  *)
+(*    • "Ready" and "ready" are different values.              *)
+(*                                                             *)
+(*  NUMERIC LITERALS (INTEGER_LIT, DECIMAL_LIT):               *)
+(*    • Case applies only to hex prefix/digits:                *)
+(*        0xFF = 0XFF = 0xff = 0Xff  (all identical)           *)
+(*    • The MHZ suffix in CLOCK_LIT is case-insensitive:       *)
+(*        64mhz = 64MHZ = 64Mhz  →  normalised to 64MHZ       *)
+(* ============================================================ *)
+
+(*
+ * IDENTIFIER — user-defined name (device type, instance, variable,
+ * function).
+ *
+ * Lexer behaviour:
+ *   1. Scan LETTER { LETTER | DIGIT | "_" } to get raw_text.
+ *   2. Compute normalised_key = lowercase(raw_text).
+ *   3. Check normalised_key against the uppercase-normalised
+ *      keyword table (compare after lowercasing the keyword too).
+ *   4. If it matches a keyword → emit that keyword token.
+ *   5. Otherwise → emit IDENTIFIER token carrying both
+ *      original_text (for display) and normalised_key (for lookup).
+ *
+ * Consequence: an author cannot name a variable "loop" or "give"
+ * regardless of capitalisation — those resolve to keywords.
+ *)
+IDENTIFIER = LETTER { LETTER | DIGIT | "_" }
+           ;
+
+(*
+ * Integer literal — decimal or hexadecimal.
+ *)
+INTEGER_LIT = HEX_LIT
+            | DIGITS
+            ;
+
+(*
+ * HEX_LIT — hex prefix (0x or 0X) followed by hex digits.
+ * Both prefix case and digit case are accepted (0xFF = 0XFF = 0xff).
+ *)
+HEX_LIT = ( "0x" | "0X" ) HEX_DIGIT { HEX_DIGIT }
+        ;
+
+DIGITS = DIGIT { DIGIT }
+       ;
+
+(*
+ * Decimal literal — must have digits on both sides of the point.
+ *)
+DECIMAL_LIT = DIGITS "." DIGITS
+            ;
+
+(*
+ * String literal — UTF-8 characters between double quotes.
+ * Escape sequences: \" (quote), \\ (backslash), \n (newline).
+ *)
+STRING = '"' { STRING_CHAR } '"'
+       ;
+
+STRING_CHAR = ANY_CHAR_EXCEPT_QUOTE_OR_BACKSLASH
+            | "\\" ( '"' | "\\" | "n" )
+            ;
+
+(*
+ * Single-line comment — stripped before parsing.
+ *)
+COMMENT = "--" { ANY_CHAR_EXCEPT_NEWLINE } NEWLINE
+        ;
+
+(*
+ * Whitespace — spaces, tabs, carriage returns, newlines.
+ * Consumed silently between tokens.
+ *)
+WS = { " " | "\t" | "\r" | "\n" }+
+   ;
+
+
+(* ------------------------------------------------------------ *)
+(*  CHARACTER CLASSES                                           *)
+(* ------------------------------------------------------------ *)
+
+LETTER = "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"
+       | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p"
+       | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x"
+       | "y" | "z"
+       | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
+       | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P"
+       | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X"
+       | "Y" | "Z"
+       ;
+
+DIGIT = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+      ;
+
+HEX_DIGIT = DIGIT
+          | "a" | "b" | "c" | "d" | "e" | "f"
+          | "A" | "B" | "C" | "D" | "E" | "F"
+          ;
+
+NEWLINE = "\n" | "\r\n"
+        ;
+
+
+(* ============================================================ *)
+(*  RESERVED KEYWORDS                                           *)
+(*                                                              *)
+(*  These words are reserved in ALL capitalisations.           *)
+(*  The lexer checks after normalising both the scanned word   *)
+(*  and the keyword to lowercase. Any capitalisation of a      *)
+(*  reserved word is a keyword token, never an IDENTIFIER.     *)
+(*                                                             *)
+(*  Authors may NOT use these as variable, device, instance,   *)
+(*  or function names regardless of how they capitalise them.  *)
+(*                                                             *)
+(*  Implementors: store this table in lowercase for O(1)       *)
+(*  lookup. Emit the canonical UPPERCASE token kind.           *)
+(* ============================================================ *)
+
+(*
+RESERVED =
+    (* Section headers *)
+    "config"   | "define"   | "create"   | "declare"  | "function"
+  | "run"
+
+    (* Control flow *)
+  | "loop"     | "every"    | "for"      | "in"       | "range"
+  | "if"       | "else"     | "break"    | "continue"
+
+    (* Function / expression *)
+  | "return"   | "call"
+
+    (* I/O commands *)
+  | "delay"    | "print"    | "turn"     | "set"      | "toggle"
+  | "read"     | "read_percent"
+
+    (* Device / pin syntax *)
+  | "on"       | "pin"      | "pull"     | "up"       | "down"
+  | "init"     | "as"       | "constant"
+
+    (* Ownership keywords *)
+  | "give"     | "lend"     | "borrow"
+
+    (* Literals *)
+  | "high"     | "low"      | "true"     | "false"
+
+    (* Operators *)
+  | "is"       | "not"      | "and"      | "or"
+
+    (* Interface types *)
+  | "input"    | "output"   | "analog_input" | "pwm"
+  | "display"  | "pulse"
+
+    (* Qualifiers *)
+  | "brightness" | "speed"  | "angle"    | "red"      | "green"
+  | "blue"     | "lcd"      | "oled"     | "trigger"  | "echo"
+  | "enable"
+
+    (* Units *)
+  | "mhz"
+
+    (* Built-in type names *)
+  | "integer"  | "decimal"  | "percentage" | "boolean"
+  | "string"   | "byte"
+  ;
+*)
+
+
+(* ============================================================ *)
+(*  SEMANTIC CONSTRAINTS                                        *)
+(*  (Cannot be expressed in EBNF — enforced by semantic pass)  *)
+(* ============================================================ *)
+
+(*
+  1.  SECTION ORDER
+      Sections must appear in the order:
+      CONFIG → DEFINE → CREATE → DECLARE → FUNCTION → RUN.
+      Violation is a compile-time error.
+
+  2.  INLINE DEFINE / CREATE / DECLARE LIMIT
+      A bare DEFINE, CREATE, or DECLARE (not followed by a block
+      opener) may contain exactly one item. Using a comma in
+      inline position is a compile-time error.
+
+  3.  CONFIG PROPERTIES
+      CONFIG items do not use commas after values. A comma in a
+      CONFIG section is a compile-time error.
+
+  4.  CALL ARGUMENT SEPARATORS
+      Arguments in call_arg_list must be separated by commas.
+      Having two arguments without a comma between them is a
+      compile-time error.
+
+  5.  PIN UNIQUENESS
+      Each PIN number may appear in at most one creation_item
+      across the entire program.
+
+  6.  INTERFACE COVERAGE
+      Every interface declared in a composite DEFINE must receive
+      exactly one PIN assignment in the corresponding CREATE.
+
+  7.  INIT RESTRICTIONS
+      INIT is not permitted on INPUT, ANALOG_INPUT, or PULSE
+      interfaces. PULL is only permitted on INPUT interfaces.
+      When INIT is present, all writable interfaces must be covered.
+      A simple device with a composite INIT block is a compile-time
+      error (mismatch between device arity and INIT arity).
+
+  8.  TYPE COMPATIBILITY
+      Assignment target type must match expression type.
+      Percentage literals must be in [0.0, 100.0].
+      Byte literals must be in [0, 255].
+
+  9.  RANGE DIRECTION
+      In a range_expr, the from value must be ≤ to_inclusive.
+      Both bounds must resolve to Integer type.
+
+  10. OWNERSHIP ON DEVICE PARAMETERS
+      Any function parameter whose type is a user-defined device
+      type (declared in DEFINE) must carry an ownership keyword.
+      Data-type parameters must not carry an ownership keyword.
+      Violation is a compile-time error.
+
+  11. OWNERSHIP CALL-SITE MATCH
+      The ownership keyword at the call site must match the
+      ownership keyword in the function definition.
+
+  12. DEVICE UNIQUENESS PER CALL
+      A device identifier may appear at most once in a single
+      call_arg_list. Duplicate device arguments are a compile-time
+      error.
+
+  13. GIVE SCOPE TERMINATION
+      After CALL f GIVE d, the identifier d is removed from the
+      current scope for all subsequent statements.
+
+  14. LEND WRITE PROHIBITION
+      Inside a function body where a device parameter is declared
+      LEND, the commands TURN, SET, and TOGGLE on that parameter
+      are forbidden.
+
+  15. EVERY PLACEMENT
+      every_block may only appear as a direct child of run_section,
+      or inside a top_if_block that is a direct child of run_section.
+      every_block is forbidden inside loop_block, for_stmt, or
+      any nested statement-level if_stmt.
+
+  16. EVERY DELAY WARNING
+      If a delay_stmt inside an every_block has a duration equal
+      to or greater than the EVERY period, a warning is emitted.
+
+  17. BREAK / CONTINUE SCOPE
+      break_stmt and continue_stmt are only valid inside a
+      loop_block or for_stmt. Their use elsewhere is a
+      compile-time error.
+
+  18. RETURN TYPE CONSISTENCY
+      All return_stmt expressions within a single function_def
+      must resolve to the same type.
+      A function with no return_stmt is void.
+      A void function may not appear in expression position or
+      on the right side of an assignment.
+
+  19. SCHEDULED BLOCK DEVICE CONFLICT
+      If the same device identifier appears as a write target
+      (TURN, SET, TOGGLE, or BORROW call) in both an every_block
+      and a loop_block within the same run_section, it is a
+      compile-time error.
+
+  20. QUALIFIER VALIDITY
+      Qualifiers must match the interface type they annotate
+      (see §3.2 of the specification).
+
+  21. AMBIGUOUS SET
+      SET on a composite device without a QUALIFIER is a
+      compile-time error when more than one interface on that
+      device accepts the value type.
+
+  22. IS / IS NOT APPLICABILITY
+      The IS and IS NOT operators may only be applied to
+      device interface identifiers or Boolean variables.
+      Applying them to Integer, Decimal, Percentage, String,
+      or Byte expressions is a compile-time error.
+
+  23. IDENTIFIER CASE PRESERVATION
+      The semantic pass uses normalised_key (lowercase) for all
+      symbol table lookups, equality checks, and duplicate
+      detection. When an identifier appears in a diagnostic
+      (error message, warning), the original_text from its
+      first declaration site is used for display.
+      Consequence: declaring Button and then referencing button
+      or BUTTON all resolve to the same symbol, and errors will
+      read: "'Button' was given to ..." using the first-seen form.
+
+  24. NO ELSE IF CONSTRUCT
+      The grammar does not provide an ELSE IF keyword sequence.
+      This design choice is intentional for the following reasons:
+
+      a) READABILITY FOR BEGINNERS:
+         Nested IF-ELSE structures make the branching hierarchy
+         visually explicit. A student can see that each condition
+         is evaluated only when previous conditions fail.
+
+         Example:
+           IF temp > 35.0 {
+               PRINT "Hot"
+           } ELSE {
+               IF temp < 10.0 {
+                   PRINT "Cold"
+               } ELSE {
+                   PRINT "Normal"
+               }
+           }
+
+         The nesting makes the exclusive nature of the branches
+         immediately visible to novice programmers.
+
+      b) AVOIDS DANGLING ELSE AMBIGUITY:
+         Languages with ELSE IF introduce ambiguity about which
+         IF an ELSE belongs to. By requiring explicit nesting,
+         this ambiguity is eliminated entirely.
+
+      c) CONSISTENCY WITH BLOCK STRUCTURE:
+         Every ELSE in the language pairs directly with exactly
+         one IF block. There are no special forms. This regularity
+         reduces the number of concepts a student must learn.
+
+      d) TEACHES COMPOSITION:
+         Students learn that control structures compose — you can
+         put any statement (including another IF) inside an ELSE
+         block. This is a more fundamental lesson than memorising
+         a special ELSE IF keyword.
+
+      A compile-time error is emitted if ELSE IF is encountered,
+      with a suggestion to rewrite using nested IF-ELSE.
+
+  25. INLINE IF BRANCH REQUIREMENTS
+      An inline if_expr must have both branches. A missing ELSE
+      branch is a compile-time error. Both branches must return
+      the same type.
+
+  26. SIMPLE DEVICE INIT ARITY
+      A simple device (defined with a single interface_spec) must
+      use a single init_value, not a composite init block. Using
+      "INIT { ... }" on a simple device is a compile-time error.
+*)
+
+
+(* ============================================================ *)
+(*  ERROR RECOVERY PATTERNS                                     *)
+(*  (Recommendations for parser implementation)                *)
+(* ============================================================ *)
+
+(*
+ * When a parse error occurs, the following recovery strategies
+ * are recommended:
+ *
+ * 1. MISSING CLOSING BRACE:
+ *    At EOF, if brace stack non-empty, insert missing '}' and
+ *    report "Missing '}' at end of file"
+ *
+ * 2. INVALID SECTION ORDER:
+ *    Continue parsing but defer semantic validation.
+ *    Report all order violations at once, not the first only.
+ *
+ * 3. UNKNOWN IDENTIFIER:
+ *    Suggest closest match using Levenshtein distance ≤ 2
+ *    from the keyword/identifier table.
+ *
+ * 4. MISSING CALL KEYWORD:
+ *    If IDENTIFIER is a known function name in this context,
+ *    suggest "Did you mean: CALL identifier"
+ *
+ * 5. MISSING COMMA IN CALL ARGUMENTS:
+ *    If two call_arg are adjacent without a comma, insert a
+ *    comma and continue, reporting a fix suggestion.
+ *
+ * 6. MISMATCHED INIT ARITY:
+ *    If simple device has composite INIT or composite device
+ *    has mismatched INIT entry count, report the expected vs
+ *    actual number of initialization values.
+ *)
+
+(* ============================================================ *)
+(*  END OF GRAMMAR                                              *)
+(* ============================================================ *)
