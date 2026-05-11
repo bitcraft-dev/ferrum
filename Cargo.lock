@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "compiler"
+name = "ferrum"
 version = "0.1.0"
 
 [[package]]

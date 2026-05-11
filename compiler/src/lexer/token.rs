@@ -1,5 +1,3 @@
-// ferrum/compiler/src/lexer/token.rs
-//
 // Every terminal in the Ferrum EBNF grammar maps to exactly one
 // variant in this enum. The lexer produces a Vec<Spanned<Token>>;
 // the parser consumes it.

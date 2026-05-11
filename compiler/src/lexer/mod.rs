@@ -1,5 +1,3 @@
-// ferrum/compiler/src/lexer/mod.rs
-//
 // Public surface of the lexer module.
 //
 // Other modules import from here:

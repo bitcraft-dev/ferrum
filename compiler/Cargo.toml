@@ -1,6 +1,18 @@
 [package]
-name = "compiler"
+name = "ferrum"
 version = "0.1.0"
 edition = "2024"
+description = "Ferrum embedded DSL compiler — Rust codegen for .fe source files"
+license     = "Apache-2.0 OR GPL-3.0-or-later"
+license-file     = "../LICENSE"
+
+[[bin]]
+name = "ferrum"
+path = "src/main.rs"
 
 [dependencies]
+# No external dependencies for the core compiler pipeline.
+# The lexer, parser, semantic pass, and AST are all pure Rust.
+
+[dev-dependencies]
+# No additional test dependencies beyond std.

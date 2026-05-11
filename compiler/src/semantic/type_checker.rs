@@ -27,7 +27,7 @@
 
 use crate::ast::*;
 use crate::lexer::token::{Ident, Span};
-use crate::semantic::diagnostic::{Diagnostic, DiagnosticKind, Severity};
+use crate::semantic::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::semantic::symbol_table::{
     ParamInfo, ParamKind, SymbolKind, SymbolTable, UsageTracker,
 };

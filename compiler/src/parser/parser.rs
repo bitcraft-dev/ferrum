@@ -1658,12 +1658,10 @@ impl Parser {
         &mut self,
         f: F,
     ) -> Option<T> {
-        let saved_pos = self.pos;
         match f(self) {
             Ok(t)  => Some(t),
             Err(e) => {
                 self.errors.push(e);
-                self.pos = saved_pos;
                 None
             }
         }

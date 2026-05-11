@@ -62,6 +62,7 @@ ferrum/                          ← project root
 │   │   │   └── nodes.rs          ← AST node definitions
 │   │   ├── semantic/
 │   │   │   ├── mod.rs
+│   │   │   ├── declaration_collector.rs ← registers symbols before checking
 │   │   │   ├── symbol_table.rs   ← scope stack, identifier resolution
 │   │   │   ├── diagnostic.rs     ← diagnostic context
 │   │   │   ├── type_checker.rs   ← constraint validation 6, 8–14, 18, 22, 25
@@ -135,10 +136,11 @@ Defines all Abstract Syntax Tree node types.
 - `RunSection` - Program entry point
 - `Expr`, `Stmt` - Expressions and statements
 
-### 4. **Semantic Analysis** (`compiler/src/semantic/`) - *In Progress*
+### 4. **Semantic Analysis** (`compiler/src/semantic/`) - *Complete*
 Validates semantic constraints and type safety.
 
 **Files:**
+- `declaration_collector.rs` - top-level symbol registration before checking
 - `symbol_table.rs` - Scope stack and identifier resolution
 - `diagnostic.rs` - Diagnostic context for error collection
 - `type_checker.rs` - Type constraint validation (constraints 6, 8–14, 18, 22, 25)
@@ -266,9 +268,10 @@ See [examples/soil_moisture.fe](examples/soil_moisture.fe) for a complete real-w
 | Type System | ✅ Complete |
 | Grammar Specification | ✅ Complete |
 | Symbol Table | ✅ Complete (scope stack, resolution, device tracking) |
+| Declaration Collector | ✅ Complete (top-level symbol registration) |
 | Type Checker | ✅ Complete (constraint validation, type inference) |
-| Ownership Checker | 🚧 In Progress |
-| Device Checker | 🚧 In Progress |
+| Ownership Checker | ✅ Complete (GIVE / LEND / BORROW rules) |
+| Device Checker | ✅ Complete (pin uniqueness, ambiguous SET detection) |
 | Code Generation | 🚧 In Progress |
 | Diagnostics System | ✅ Complete (comprehensive DiagnosticKind coverage) |
 | Examples | 📋 Planned |
