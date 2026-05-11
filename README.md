@@ -262,13 +262,17 @@ See [examples/soil_moisture.fe](examples/soil_moisture.fe) for a complete real-w
 |-----------|--------|
 | Lexer | ✅ Complete |
 | Parser | ✅ Complete |
-| AST | ✅ Complete |
+| AST | ✅ Complete + modularized |
 | Type System | ✅ Complete |
 | Grammar Specification | ✅ Complete |
-| Semantic Analysis | 🚧 In Progress |
+| Symbol Table | ✅ Complete (scope stack, resolution, device tracking) |
+| Type Checker | ✅ Complete (constraint validation, type inference) |
+| Ownership Checker | 🚧 In Progress |
+| Device Checker | 🚧 In Progress |
 | Code Generation | 🚧 In Progress |
-| Diagnostics System | 🚧 In Progress |
+| Diagnostics System | ✅ Complete (comprehensive DiagnosticKind coverage) |
 | Examples | 📋 Planned |
+| License & Attribution | ✅ Complete (dual Apache 2.0 / GPL-3.0-or-later) |
 
 ## Documentation
 
@@ -312,11 +316,26 @@ When working on the compiler, focus on:
 
 ## License
 
-[Add license information here]
+Ferrum is dual-licensed under your choice of either:
+
+- Apache License 2.0
+- GNU General Public License v3.0 or later
+
+This gives users permissive reuse with attribution, an express patent grant, NOTICE handling, and a copyleft option for derivative works.
+
+See the root `LICENSE` file for the full license notice and licensing terms.
 
 ## Authors
 
-[Add author information here]
+- Ferrum
+- Author: Ainebyoona Dickson
+- GitHub: https://github.com/Aine-dickson
+- Email: ainedixon01@gmail.com
+- Project sponsor and steward: Bitcraft, a learning lab and open-source forge by BitPulse
+- Bitcraft GitHub: https://github.com/bitcraft-dev
+- Ferrum repository: https://github.com/bitcraft-dev/ferrum
+- Bitcraft contact: dev@craft.bitpulse.dev
+- Sole contributor so far: Ainebyoona Dickson
 
 ---
 
