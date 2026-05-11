@@ -1,6 +1,6 @@
 # Ferrum: Embedded Systems DSL
 
-Ferrum is a **domain-specific language (DSL) for embedded systems programming**, specifically designed for secondary education. It teaches hardware interaction through capability-based interfaces with an ownership and borrowing model inspired by Rust, while compiling to Rust as an intermediate target.
+**Ferrum** is a **domain-specific language (DSL) for embedded systems programming**, specifically designed for secondary education. It teaches hardware interaction through capability-based interfaces with an ownership and borrowing model inspired by Rust, while compiling to Rust as an intermediate target.
 
 ## Language Philosophy
 
@@ -41,75 +41,146 @@ CONFIG → DEFINE → CREATE → DECLARE → FUNCTION → RUN
 ## Project Structure
 
 ```
-ferrum/
-├── Cargo.toml                    # Workspace configuration
-├── spec/                         # Language specification
-│   ├── ferrum_spec_v1.3.md       # Complete language specification
-│   └── ferrum_grammar_v1.3.ebnf  # Formal EBNF grammar
-├── compiler/                     # Ferrum compiler (compiles to Rust)
+ferrum/                          ← project root
+│
+├── spec/
+│   ├── ferrum_spec_v1.3.md
+│   └── ferrum_grammar_v1.3.ebnf
+│
+├── compiler/                     ← the core pipeline
 │   ├── src/
-│   │   ├── main.rs               # Compiler entry point
-│   │   ├── lexer/                # Tokenization
-│   │   ├── parser/               # Syntax parsing → AST
-│   │   ├── ast/                  # Abstract syntax tree definitions
-│   │   ├── types/                # Type system & span tracking
-│   │   ├── semantic/             # Semantic analysis (in progress)
-│   │   ├── codegen/              # Code generation (in progress)
-│   │   └── diagnostics/          # Error reporting (in progress)
+│   │   ├── main.rs               ← CLI entry: reads .fe file, runs pipeline
+│   │   ├── lexer/
+│   │   │   ├── mod.rs
+│   │   │   ├── token.rs          ← Token enum + Span
+│   │   │   └── lexer.rs          ← case-normalising lexer
+│   │   ├── parser/
+│   │   │   ├── mod.rs
+│   │   │   └── parser.rs         ← recursive descent, produces AST
+│   │   ├── ast/
+│   │   │   ├── mod.rs
+│   │   │   └── nodes.rs          ← AST node definitions
+│   │   ├── semantic/
+│   │   │   ├── mod.rs
+│   │   │   ├── symbol_table.rs   ← scope stack, identifier resolution
+│   │   │   ├── diagnostic.rs     ← diagnostic context
+│   │   │   ├── type_checker.rs   ← constraint validation 6, 8–14, 18, 22, 25
+│   │   │   ├── ownership.rs      ← ownership constraints 10–14, 19
+│   │   │   └── device_checker.rs ← device constraints 3–7, 20, 21
+│   │   ├── codegen/
+│   │   │   ├── mod.rs
+│   │   │   └── rust_emit.rs      ← AST → Rust source
+│   │   └── diagnostics/
+│   │       ├── mod.rs
+│   │       └── reporter.rs       ← error + warning formatting
 │   └── Cargo.toml
-├── runtime/                      # Runtime support library
-│   ├── src/lib.rs
+│
+├── runtime/                      ← thin Rust HAL glue (board support)
+│   ├── src/
+│   │   └── lib.rs
 │   └── Cargo.toml
-├── stdlib/                       # Standard library for Ferrum
-│   ├── src/lib.rs
+│
+├── stdlib/                       ← built-in functions (abs, clamp, map …)
+│   ├── src/
+│   │   └── lib.rs
 │   └── Cargo.toml
-└── examples/                     # Example Ferrum programs
+│
+└── examples/
+    └── soil_moisture.fe        ← the complete example from the spec
 ```
 
 ## Compiler Architecture
 
-The compiler follows a multi-pass architecture:
+The compiler is a multi-stage pipeline that transforms `.fe` source files to Rust:
 
-### 1. Lexer (`compiler/src/lexer/`)
-- Tokenizes source code into tokens
-- Case-insensitive keyword handling (normalized to uppercase)
-- Case-preserving identifiers
-- Whitespace and comment consumption
+### 1. **Lexer** (`compiler/src/lexer/`)
+Tokenizes source code into a stream of tokens.
 
-### 2. Parser (`compiler/src/parser/`)
-- Builds abstract syntax tree (AST) from tokens
-- Enforces grammar per `ferrum_grammar_v1.3.ebnf`
-- Tracks source locations (Span) for accurate error reporting
+**Files:**
+- `token.rs` - `Token` enum and `Span` type for source location tracking
+- `lexer.rs` - Case-normalizing lexer (keywords normalized to uppercase, identifiers case-preserved)
 
-### 3. AST (`compiler/src/ast/`)
-Defines program structure with nodes including:
-- **Program** - Full program structure
-- **ConfigSection** - Configuration options
-- **DefineItem** - Device templates
-- **CreateItem** - Device instantiation
-- **DeclareItem** - Variables and constants
-- **FunctionDef** - User-defined functions
-- **RunSection** - Entry point
+**Responsibilities:**
+- Break source text into tokens
+- Track source positions (Span) for accurate error reporting
+- Handle comments and whitespace
+- Case-insensitive keyword handling
 
-### 4. Type System (`compiler/src/types/`)
-- **Span** - Source location tracking for error messages
-- **Ident** - Case-preserving, case-insensitive identifiers
-- Type definitions and validation
+### 2. **Parser** (`compiler/src/parser/`)
+Builds an Abstract Syntax Tree (AST) from the token stream via recursive descent parsing.
 
-### 5. Semantic Analysis (`compiler/src/semantic/`) - *In Progress*
-- Symbol table management
+**Files:**
+- `parser.rs` - Recursive descent parser, enforces grammar per `ferrum_grammar_v1.3.ebnf`
+- `mod.rs` - Module exports and integration
+
+**Responsibilities:**
+- Parse tokens into AST following EBNF grammar
+- Maintain source spans for accurate error reporting
+- Fail gracefully with diagnostic information
+
+### 3. **AST** (`compiler/src/ast/`)
+Defines all Abstract Syntax Tree node types.
+
+**Files:**
+- `nodes.rs` - All AST node definitions
+- `mod.rs` - Module exports
+
+**Node Types:**
+- `Program` - Top-level program structure
+- `ConfigSection` - Configuration block
+- `DefineItem` - Device template definitions
+- `CreateItem` - Device instantiation
+- `DeclareItem` - Variable/constant declarations
+- `FunctionDef` - User-defined functions
+- `RunSection` - Program entry point
+- `Expr`, `Stmt` - Expressions and statements
+
+### 4. **Semantic Analysis** (`compiler/src/semantic/`) - *In Progress*
+Validates semantic constraints and type safety.
+
+**Files:**
+- `symbol_table.rs` - Scope stack and identifier resolution
+- `diagnostic.rs` - Diagnostic context for error collection
+- `type_checker.rs` - Type constraint validation (constraints 6, 8–14, 18, 22, 25)
+- `ownership.rs` - Ownership and borrowing validation (constraints 10–14, 19)
+- `device_checker.rs` - Device pin and config validation (constraints 3–7, 20, 21)
+- `mod.rs` - Module coordination
+
+**Responsibilities:**
+- Build symbol table and track scopes
 - Type checking and inference
-- Device ownership validation
+- Ownership and borrowing validation
 - Pin conflict detection
-- Configuration validation
+- Device configuration validation
+- Range checking (e.g., `Percentage` must be 0.0–100.0)
 
-### 6. Code Generation (`compiler/src/codegen/`) - *In Progress*
-- Transforms AST to Rust code
-- Generates runtime library calls
+### 5. **Code Generation** (`compiler/src/codegen/`) - *In Progress*
+Transforms validated AST to Rust source code.
 
-### 7. Diagnostics (`compiler/src/diagnostics/`) - *In Progress*
-- Formatted error reporting with suggestions
-- Source highlighting
+**Files:**
+- `rust_emit.rs` - AST → Rust source code emission
+- `mod.rs` - Module exports
+
+**Responsibilities:**
+- Generate idiomatic Rust code from AST
+- Call runtime library functions for device operations
+- Emit setup code for board initialization
+
+### 6. **Diagnostics** (`compiler/src/diagnostics/`) - *In Progress*
+Formats and reports errors and warnings.
+
+**Files:**
+- `reporter.rs` - Error and warning formatting with suggestions
+- `mod.rs` - Module exports
+
+**Responsibilities:**
+- Collect errors/warnings with source locations
+- Format readable error messages
+- Provide actionable suggestions
+- Source snippet highlighting
+
+### 7. **Main Entry Point** (`compiler/src/main.rs`)
+CLI orchestration: reads `.fe` files and runs the complete pipeline.
 
 ## Getting Started
 
@@ -145,9 +216,9 @@ Each crate is independent but works together:
 
 ## Language Example
 
-While examples are in development, a typical Ferrum program would look like:
+A typical Ferrum program (saved as `.fe`):
 
-```ferrum
+```fe
 CONFIG {
    TARGET = "microbit_v2",
    DEBUG = TRUE
@@ -176,6 +247,8 @@ RUN {
    }
 }
 ```
+
+See [examples/soil_moisture.fe](examples/soil_moisture.fe) for a complete real-world example.
 
 ## Supported Targets
 
@@ -229,9 +302,13 @@ Intentional syntax and concepts prepare students for real Rust, introducing:
 
 When working on the compiler, focus on:
 1. **Lexer/Parser**: Ensure tokenization and parsing follow `ferrum_grammar_v1.3.ebnf`
-2. **Semantic Analysis**: Implement symbol table, type checking, and device validation
+2. **Semantic Analysis**: 
+   - `symbol_table.rs` - scope resolution
+   - `type_checker.rs` - type constraints (6, 8–14, 18, 22, 25)
+   - `ownership.rs` - ownership constraints (10–14, 19)
+   - `device_checker.rs` - device constraints (3–7, 20, 21)
 3. **Code Generation**: Transform validated AST to Rust code using the runtime library
-4. **Diagnostics**: Generate helpful, actionable error messages
+4. **Diagnostics**: Generate helpful, actionable error messages with source highlighting
 
 ## License
 

@@ -111,8 +111,11 @@ impl Parser {
     pub fn parse(mut self) -> ParseResult {
         let program = self.parse_program();
         ParseResult {
-            program: if self.errors.is_empty() { Some(program) } else { None }
-                .or_else(|| if self.errors.iter().all(|_| false) { None } else { Some(program) }),
+            program: if self.errors.is_empty() { 
+                Some(program) 
+            } else { 
+                None 
+            },
             errors: self.errors,
         }
     }
@@ -120,9 +123,9 @@ impl Parser {
     // ── program ─────────────────────────────────────────────────
     //
     // program = [ config_section ]
-    //           { define_section }
-    //           { create_section }
-    //           { declare_section }
+    //           [ define_section ]
+    //           [ create_section ]
+    //           [ declare_section ]
     //           { function_def }
     //           run_section
     //         ;
