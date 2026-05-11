@@ -1,6 +1,6 @@
 # Ferrum: Embedded Systems DSL
 
-**Ferrum** is a **domain-specific language (DSL) for embedded systems programming**, specifically designed for secondary education. It teaches hardware interaction through capability-based interfaces with an ownership and borrowing model inspired by Rust, while compiling to Rust as an intermediate target.
+**Ferrum** is a **domain-specific language (DSL) for embedded systems programming**, designed to guide developers from foundational concepts to advanced embedded design. It teaches hardware interaction through capability-based interfaces and an ownership and borrowing model inspired by Rust, making it suitable for `early learners`, `academic environments`, and `professional exploration`, while *compiling to Rust* as an intermediate target.
 
 ## Language Philosophy
 
