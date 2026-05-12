@@ -76,19 +76,36 @@ ferrum/                          ← project root
 │   │       └── reporter.rs       ← error + warning formatting
 │   └── Cargo.toml
 │
-├── runtime/                      ← thin Rust HAL glue (board support)
+├── runtime/                      ← no_std runtime bridge, scheduler, debounce, board support
 │   ├── src/
-│   │   └── lib.rs
+│   │   ├── boards/
+│   │   │   ├── microbit_v2.rs
+│   │   │   └── rp2040.rs
+│   │   ├── debounce.rs
+│   │   ├── lib.rs
+│   │   ├── scheduler.rs
+│   │   └── traits.rs
 │   └── Cargo.toml
 │
-├── stdlib/                       ← built-in functions (abs, clamp, map …)
+├── stdlib/                       ← built-in functions; still the least complete crate
 │   ├── src/
 │   │   └── lib.rs
 │   └── Cargo.toml
 │
 └── examples/
-    └── soil_moisture.fe        ← the complete example from the spec
+    └── fun_controller.fe        ← the complete example from the spec
 ```
+
+## Current Status
+
+Ferrum is past the compiler skeleton stage. The active codebase today includes:
+
+- a working CLI driver with token, AST, check, and full compile modes
+- a lexer, parser, AST, semantic analysis, diagnostics, and Rust code generation pipeline
+- a real no_std runtime bridge with traits, scheduler, debounce logic, and board implementations for micro:bit v2 and RP2040
+- a standard library crate that still needs fuller built-in coverage
+
+The main remaining product gap is the stdlib. Runtime support is present and should be documented as such.
 
 ## Compiler Architecture
 
@@ -156,7 +173,7 @@ Validates semantic constraints and type safety.
 - Device configuration validation
 - Range checking (e.g., `Percentage` must be 0.0–100.0)
 
-### 5. **Code Generation** (`compiler/src/codegen/`) - *In Progress*
+### 5. **Code Generation** (`compiler/src/codegen/`) - *Complete*
 Transforms validated AST to Rust source code.
 
 **Files:**
@@ -168,7 +185,7 @@ Transforms validated AST to Rust source code.
 - Call runtime library functions for device operations
 - Emit setup code for board initialization
 
-### 6. **Diagnostics** (`compiler/src/diagnostics/`) - *In Progress*
+### 6. **Diagnostics** (`compiler/src/diagnostics/`) - *Complete*
 Formats and reports errors and warnings.
 
 **Files:**
@@ -181,7 +198,25 @@ Formats and reports errors and warnings.
 - Provide actionable suggestions
 - Source snippet highlighting
 
-### 7. **Main Entry Point** (`compiler/src/main.rs`)
+### 7. **Runtime Bridge** (`runtime/`)
+
+The runtime crate is the hardware abstraction layer that generated Ferrum code links against.
+
+**Files:**
+- `lib.rs` - crate root and `no_std` re-exports
+- `traits.rs` - the interface contract generated code uses for I/O, analog, PWM, display, delay, and pulse handling
+- `scheduler.rs` - polling scheduler used for `EVERY` blocks
+- `debounce.rs` - button debounce support
+- `boards/microbit_v2.rs` - concrete BBC micro:bit v2 support
+- `boards/rp2040.rs` - concrete RP2040 support
+
+**Responsibilities:**
+- Provide the generated code with stable runtime traits
+- Wrap board-specific HAL details behind a crate-level contract
+- Keep the emitted Rust `#![no_std]` friendly
+- Centralize polling and button stabilization logic
+
+### 8. **Main Entry Point** (`compiler/src/main.rs`)
 CLI orchestration: reads `.fe` files and runs the complete pipeline.
 
 ## Getting Started
@@ -250,7 +285,7 @@ RUN {
 }
 ```
 
-See [examples/soil_moisture.fe](examples/soil_moisture.fe) for a complete real-world example.
+See [examples/fun_controller.fe](examples/fun_controller.fe) for a complete real-world example.
 
 ## Supported Targets
 
@@ -272,9 +307,11 @@ See [examples/soil_moisture.fe](examples/soil_moisture.fe) for a complete real-w
 | Type Checker | ✅ Complete (constraint validation, type inference) |
 | Ownership Checker | ✅ Complete (GIVE / LEND / BORROW rules) |
 | Device Checker | ✅ Complete (pin uniqueness, ambiguous SET detection) |
-| Code Generation | 🚧 In Progress |
+| Code Generation | ✅ Complete (Rust emission, Cargo metadata, linker setup) |
+| Runtime | ✅ Complete (traits, scheduler, debounce, microbit_v2, rp2040) |
+| Stdlib | 🚧 Partial (crate exists, built-ins still expanding) |
 | Diagnostics System | ✅ Complete (comprehensive DiagnosticKind coverage) |
-| Examples | 📋 Planned |
+| Examples | ✅ Present |
 | License & Attribution | ✅ Complete (dual Apache 2.0 / GPL-3.0-or-later) |
 
 ## Documentation

@@ -1,6 +1,28 @@
 [package]
-name = "runtime"
+name    = "ferrum-runtime"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "ferrum_runtime"
+
+[features]
+default      = []
+microbit_v2  = ["microbit-v2", "embedded-hal"]
+rp2040       = ["rp-pico", "cortex-m", "embedded-hal"]
+
 [dependencies]
+# No default dependencies — the crate is pure no_std Rust
+# when no board feature is selected (useful for host tests).
+
+# micro:bit v2 board support
+microbit-v2   = { version = "0.15", optional = true }
+embedded-hal  = { version = "0.2",  optional = true }
+
+# Raspberry Pi Pico board support
+rp-pico       = { version = "0.9",  optional = true }
+cortex-m      = { version = "0.7",  optional = true }
+
+[dev-dependencies]
+# dev-dependencies have std available — used for host-side tests
+# of scheduler, debounce, and traits with mock implementations.

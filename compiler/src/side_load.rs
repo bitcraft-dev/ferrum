@@ -1,88 +1,124 @@
 // ================================================================
-// FERRUM COMPILER — REMAINING MODULES
-// ferrum_compiler_remaining.rs
+// FERRUM RUNTIME
+// ferrum_runtime.rs
 //
-// This file contains all remaining compiler modules in order.
+// The runtime crate that generated .fe programs link against.
+// Also contains the TURN statement bug fix for rust_emit.rs.
+//
 // Each module is clearly delimited by:
 //
-//   ╔══ MODULE: path/to/module.rs ══╗
+//   ╔══ MODULE: path/to/file ══╗
 //   ...
-//   ╚══ END MODULE: path/to/module.rs ══╝
+//   ╚══ END MODULE: path/to/file ══╝
 //
-// Modules contained:
-//   1.  semantic/declaration_collector.rs
-//   2.  semantic/ownership.rs
-//   3.  semantic/device_checker.rs
-//   4.  semantic/mod.rs
-//   5.  diagnostics/reporter.rs
-//   6.  main.rs
-//   7.  Cargo.toml
+// Contents:
+//   1.  BUGFIX: rust_emit.rs StmtKind::Turn correction
+//   2.  runtime/src/lib.rs          — crate root + re-exports
+//   3.  runtime/src/traits.rs       — FerrumPin, FerrumPwm, FerrumDisplay
+//   4.  runtime/src/scheduler.rs    — EVERY polling scheduler
+//   5.  runtime/src/boards/mod.rs   — board selector
+//   6.  runtime/src/boards/microbit_v2.rs
+//   7.  runtime/src/boards/rp2040.rs
+//   8.  runtime/src/debounce.rs     — button debounce helper
+//   9.  runtime/Cargo.toml
+//  10.  Updated codegen/context.rs  — pin_access fixed per board
 // ================================================================
 
 
+// ╔══ MODULE: ferrum/runtime/src/traits.rs ══╗
+//
+
+// ╚══ END MODULE: ferrum/runtime/src/traits.rs ══╝
 
 
+// ╔══ MODULE: ferrum/runtime/src/scheduler.rs ══╗
+
+// ╚══ END MODULE: ferrum/runtime/src/scheduler.rs ══╝
 
 
+// ╔══ MODULE: ferrum/runtime/src/debounce.rs ══╗
+//
 
-// ╔══ FILE: ferrum/compiler/Cargo.toml ══╗
-//
-// [package]
-// name        = "ferrum"
-// version     = "0.1.0"
-// edition     = "2021"
-// description = "Ferrum embedded DSL compiler — Rust codegen for .fe source files"
-// license     = "MIT"
-//
-// [[bin]]
-// name = "ferrum"
-// path = "src/main.rs"
-//
-// [dependencies]
-// # No external dependencies for the core compiler pipeline.
-// # The lexer, parser, semantic pass, and AST are all pure Rust.
-//
-// [dev-dependencies]
-// # No additional test dependencies beyond std.
-//
-// ╚══ END FILE: ferrum/compiler/Cargo.toml ══╝
+// ╚══ END MODULE: ferrum/runtime/src/debounce.rs ══╝
 
 
-// ╔══ FILE: ferrum/compiler/src/diagnostics/mod.rs ══╗
+// ╔══ MODULE: ferrum/runtime/src/boards/microbit_v2.rs ══╗
 //
-// pub mod reporter;
+
+// ╚══ END MODULE: ferrum/runtime/src/boards/microbit_v2.rs ══╝
+
+
+// ╔══ MODULE: ferrum/runtime/src/boards/rp2040.rs ══╗
 //
-// ╚══ END FILE: ferrum/compiler/src/diagnostics/mod.rs ══╝
+
+// ╚══ END MODULE: ferrum/runtime/src/boards/rp2040.rs ══╝
+
+
+// ╔══ MODULE: ferrum/runtime/src/boards/mod.rs ══╗
+
+// ╚══ END MODULE: ferrum/runtime/src/boards/mod.rs ══╝
+
+
+// ╔══ MODULE: ferrum/runtime/src/lib.rs ══╗
+//
+
+// ╚══ END MODULE: ferrum/runtime/src/lib.rs ══╝
+
+
+// ╔══ FILE: ferrum/runtime/Cargo.toml ══╗
+//
+
+// ╚══ END FILE: ferrum/runtime/Cargo.toml ══╝
+
 
 
 // ================================================================
-// COMPLETE MODULE INVENTORY
+// RUNTIME CRATE STRUCTURE
 // ================================================================
 //
-// ferrum/compiler/
+// ferrum/runtime/
 // ├── Cargo.toml
 // └── src/
-//     ├── main.rs
-//     ├── lexer/
-//     │   ├── mod.rs          [previously written: lexer_mod.rs]
-//     │   ├── token.rs        [previously written: token.rs]
-//     │   └── lexer.rs        [previously written: lexer.rs]
-//     ├── ast/
-//     │   ├── mod.rs          [previously written: ast_mod.rs]
-//     │   └── nodes.rs        [previously written: ast_nodes.rs]
-//     ├── parser/
-//     │   ├── mod.rs          ← add: pub mod parser;
-//     │   └── parser.rs       [previously written: parser.rs]
-//     ├── semantic/
-//     │   ├── mod.rs          [this file]
-//     │   ├── diagnostic.rs   [previously written: diagnostic.rs]
-//     │   ├── symbol_table.rs [previously written: symbol_table.rs]
-//     │   ├── type_checker.rs [previously written: type_checker.rs]
-//     │   ├── declaration_collector.rs  [this file]
-//     │   ├── ownership.rs    [this file]
-//     │   └── device_checker.rs [this file]
-//     └── diagnostics/
-//         ├── mod.rs          [this file]
-//         └── reporter.rs     [this file]
+//     ├── lib.rs
+//     ├── traits.rs
+//     ├── scheduler.rs
+//     ├── debounce.rs
+//     └── boards/
+//         ├── mod.rs
+//         ├── microbit_v2.rs
+//         └── rp2040.rs
 //
+// ================================================================
+// HOW GENERATED CODE USES THE RUNTIME
+// ================================================================
+//
+// Every generated .rs file will have these additions at the top
+// (the emitter's emit_imports() adds them):
+//
+//   use ferrum_runtime::*;
+//   use ferrum_runtime::boards::microbit_v2::*;   // board-specific
+//
+// Device struct fields will use the concrete HAL types from the
+// board support module. Trait method calls on those fields
+// (set_high, is_low, set_duty, read, etc.) resolve through
+// the trait impls defined here.
+//
+// ================================================================
+// WHAT STILL NEEDS DOING BEFORE A REAL FLASH
+// ================================================================
+//
+//  1. The micro:bit v2 char_to_image() function needs a full
+//     5×5 bitmap font for at least A-Z, 0-9, and common symbols.
+//
+//  2. The TURN bug fix in rust_emit.rs (see top of this file)
+//     must be applied before any TURN statement will compile.
+//
+//  3. The codegen/mod.rs CodegenResult must be updated to include
+//     memory_x output (see updated context section above).
+//
+//  4. The main.rs driver must write memory.x alongside the .rs
+//     file so the linker can find it.
+//
+//  5. Integration test: run ferrum compile soil_moisture.fe and
+//     verify the output passes cargo check --target thumbv7em-none-eabihf.
 // ================================================================

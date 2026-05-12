@@ -1,0 +1,23 @@
+CONFIG {
+   TARGET = "microbit_v2"
+   DEBUG = TRUE
+}
+
+DEFINE Button AS INPUT
+DEFINE Led AS OUTPUT
+
+CREATE Button btn ON PIN 14 PULL UP
+CREATE Led led1 ON PIN 3
+
+DECLARE Integer clicks INIT 0
+
+RUN {
+    LOOP {
+        IF btn IS LOW {
+            TURN led1 HIGH
+            DELAY 500ms
+            TURN led1 LOW
+            clicks = clicks + 1
+        }
+    }
+}
