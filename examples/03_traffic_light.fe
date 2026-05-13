@@ -1,0 +1,71 @@
+-- Demonstrates: multiple OUTPUT devices, sequence control,
+--               EVERY for pedestrian crossing timer,
+--               RANGE in FOR loop.
+
+
+-- 03_traffic_light.fe
+-- A three-light traffic sequence with a pedestrian crossing button.
+-- Red → Green → Amber → Red ...
+-- Button triggers a pedestrian crossing (extends red phase).
+
+DEFINE Led    AS OUTPUT
+DEFINE Button AS INPUT
+
+CONFIG {
+    TARGET      = "microbit_v2"
+    DEBOUNCE_MS = 50
+    DEBUG       = TRUE
+}
+
+CREATE Led    red_led   ON PIN 10
+CREATE Led    amber_led ON PIN 11
+CREATE Led    green_led ON PIN 12
+CREATE Button ped_btn   ON PIN 14 PULL UP
+
+DECLARE
+    Boolean crossing_requested INIT FALSE
+
+FUNCTION all_off BORROW Led: red, BORROW Led: amber, BORROW Led: green {
+    TURN red   LOW
+    TURN amber LOW
+    TURN green LOW
+}
+
+RUN {
+    EVERY 100ms {
+        -- Check pedestrian button in background
+        IF ped_btn IS LOW {
+            crossing_requested = TRUE
+        }
+    }
+
+    LOOP {
+        -- Red phase (2s, extended to 4s if crossing requested)
+        CALL all_off BORROW red_led, BORROW amber_led, BORROW green_led
+        TURN red_led HIGH
+
+        IF crossing_requested IS TRUE {
+            DELAY 4000ms
+            crossing_requested = FALSE
+            PRINT "Pedestrian crossing"
+        } ELSE {
+            DELAY 2000ms
+        }
+
+        -- Green phase (3s)
+        TURN red_led LOW
+        TURN green_led HIGH
+        DELAY 3000ms
+
+        -- Amber phase (1s) — blink 3 times then hold
+        TURN green_led LOW
+        FOR i IN RANGE 0, 2 {
+            TURN amber_led HIGH
+            DELAY 250ms
+            TURN amber_led LOW
+            DELAY 250ms
+        }
+        TURN amber_led HIGH
+        DELAY 500ms
+    }
+}

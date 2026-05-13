@@ -26,7 +26,7 @@ The workspace is split into three code-producing crates and supporting documenta
 - `spec/` - the language grammar and normative language specification.
 - `examples/` - sample Ferrum source programs.
 
-The `compiler` crate is the only active executable part of the toolchain today. The `runtime` crate already provides the core no_std support layer used by generated code, while `stdlib` remains the integration target that still needs fuller built-in function coverage.
+The `compiler` crate is the active executable front end. The `runtime` crate provides the core no_std support layer used by generated code. The `stdlib` crate now provides all spec §13 built-in functions across five modules (arrays, convert, format, math, strings) with no heap allocation and full no_std compliance.
 
 ## End-to-End Flow
 

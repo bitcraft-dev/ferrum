@@ -920,7 +920,19 @@ impl<'a> TypeChecker<'a> {
                 // Data arg, data param
                 (CallArgKind::Data(expr), ParamKind::Data(expected_ty)) => {
                     let found_ty = self.check_expr(expr);
-                    self.expect_type_match(expected_ty, &found_ty, &arg.span, &param.name.original);
+
+                    // Built-in numeric functions accept any numeric type
+                    // even though they are registered with Decimal params.
+                    // Allow widening for these known builtins.
+                    let is_builtin_numeric = matches!(
+                        fn_ident.key.as_str(),
+                        "abs" | "min" | "max" | "clamp" | "map"
+                    );
+                    let both_numeric = is_numeric(&found_ty) && is_numeric(expected_ty);
+
+                    if !(is_builtin_numeric && both_numeric) {
+                        self.expect_type_match(expected_ty, &found_ty, &arg.span, &param.name.original);
+                    }
                 }
                 // Device arg, device param — check ownership keyword match
                 (CallArgKind::Device { ownership: given, name },

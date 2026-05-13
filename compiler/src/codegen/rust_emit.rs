@@ -38,10 +38,8 @@
 //         // EVERY body
 //     }
 
-use std::fmt::Write as FmtWrite;
-
 use crate::ast::*;
-use crate::codegen::context::{EmitContext, SchedulerModel};
+use crate::codegen::context::{EmitContext};
 use crate::codegen::name_mangler::{to_pascal, to_screaming_snake, to_snake};
 use crate::codegen::type_map::{
     rust_device_arg, rust_device_param_type, rust_interface_field_type,
@@ -254,6 +252,20 @@ impl<'a> Emitter<'a> {
                     };
                     // Program-level variables use static mut
                     self.w.line(&format!("static mut {}: {} = {};", name, ty, init));
+                    // If this is an array, also emit a parallel fill-level counter
+                    if let Some(size) = v.array_size {
+                        // Determine initial fill level: if fully-initialised with an array literal,
+                        // set to the literal length; otherwise start at 0.
+                        let initial_len = match &v.init {
+                            Some(InitExpr::Array(lits)) => lits.len(),
+                            _ => 0,
+                        };
+                        self.w.line(&format!(
+                            "static mut {}_LEN: usize = {};",
+                            name, // NAME_LEN (matches emitter usage)
+                            initial_len
+                        ));
+                    }
                 }
             }
         }
@@ -626,9 +638,14 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_call_stmt(&mut self, stmt: &CallStmt) {
-        let fn_name = to_snake(&stmt.function);
-        let args    = self.format_call_args(&stmt.args);
-        self.w.line(&format!("{}({});", fn_name, args));
+        if let Some(builtin) = builtin_rust_name(&stmt.function.key) {
+            let args = self.format_call_args(&stmt.args);
+            self.w.line(&format!("{};", builtin_call(builtin, &stmt.args)));
+        } else {
+            let fn_name = to_snake(&stmt.function);
+            let args    = self.format_call_args(&stmt.args);
+            self.w.line(&format!("{}({});", fn_name, args));
+        }
     }
 
     fn emit_if_stmt(&mut self, stmt: &IfStmt) {
@@ -684,6 +701,14 @@ impl<'a> Emitter<'a> {
             }
         };
         self.w.line(&format!("let {}: {} = {};", name, ty, val));
+        // If this is a block-scoped array, emit a fill-level counter variable
+        if let Some(_size) = stmt.array_size {
+            let initial_len = match &stmt.init {
+                InlineDeclareInit::Value(InitExpr::Array(lits)) => lits.len(),
+                _ => 0,
+            };
+            self.w.line(&format!("let mut {}_len: usize = {};", name, initial_len));
+        }
     }
 
     // ── Call argument formatting ──────────────────────────────────
@@ -894,6 +919,124 @@ fn collect_every_in_run_item<'a>(item: &'a RunItem, out: &mut Vec<&'a EveryBlock
             }
         }
         _ => {}
+    }
+}
+
+fn builtin_rust_name(key: &str) -> Option<&'static str> {
+    match key {
+        "abs"            => Some("ferrum_stdlib::abs"),
+        "min"            => Some("ferrum_stdlib::min"),
+        "max"            => Some("ferrum_stdlib::max"),
+        "clamp"          => Some("ferrum_stdlib::clamp"),
+        "map"            => Some("ferrum_stdlib::map"),
+        "to_integer"     => Some("ferrum_stdlib::to_integer"),
+        "to_decimal"     => Some("ferrum_stdlib::to_decimal"),
+        "to_percentage"  => Some("ferrum_stdlib::to_percentage"),
+        "to_string"      => Some("ferrum_stdlib::integer_to_string"), // overloaded — resolved by type_checker
+        "length"         => None, // resolved by type_checker to str_length or array_length
+        "includes"       => Some("ferrum_stdlib::includes"),
+        "add"            => Some("ferrum_stdlib::array_add"),
+        "remove"         => Some("ferrum_stdlib::array_remove"),
+        _                => None,
+    }
+}
+
+/// Format a complete Rust expression for a built-in function call.
+/// `builtin` is the resolved Rust path from builtin_rust_name().
+/// `args` are the original Ferrum call arguments.
+fn builtin_call(builtin: &str, args: &[CallArg]) -> String {
+    // Format all data arguments as Rust expressions.
+    // Built-in functions never take device arguments, so
+    // CallArgKind::Device is not expected here — but we guard anyway.
+    let exprs: Vec<String> = args.iter().filter_map(|a| {
+        match &a.kind {
+            CallArgKind::Data(e) => Some(emit_expr(e)),
+            CallArgKind::Device { .. } => None, // unreachable for builtins
+        }
+    }).collect();
+
+    match builtin {
+        // ── length is overloaded ──────────────────────────────────
+        // Resolved at this point by checking the first argument's type.
+        // str_length takes a &str.
+        // array_length takes the fill-level usize, not the slice itself.
+        // The emitter passes the logical length variable which the
+        // semantic pass tracks alongside each array declaration.
+        "ferrum_stdlib::str_length" => {
+            format!("ferrum_stdlib::str_length({})", exprs.join(", "))
+        }
+        "ferrum_stdlib::array_length" => {
+            // array_length(len) — the fill-level variable, not the slice
+            // The emitter names fill-level vars as: {array_name}_len
+            // e.g. DECLARE Integer[5] readings → readings_len: usize
+            let arr_name = exprs.first().cloned().unwrap_or_default();
+            format!("ferrum_stdlib::array_length({}_len)", arr_name)
+        }
+
+        // ── ADD and REMOVE mutate in place ────────────────────────
+        // ADD array, value  →  array_add(&mut array, &mut array_len, value)
+        // REMOVE array, idx →  array_remove(&mut array, &mut array_len, idx)
+        "ferrum_stdlib::array_add" => {
+            let arr   = exprs.get(0).cloned().unwrap_or_default();
+            let value = exprs.get(1).cloned().unwrap_or_default();
+            format!(
+                "ferrum_stdlib::array_add(&mut {}, &mut {}_len, {})",
+                arr, arr, value
+            )
+        }
+        "ferrum_stdlib::array_remove" => {
+            let arr = exprs.get(0).cloned().unwrap_or_default();
+            let idx = exprs.get(1).cloned().unwrap_or_default();
+            format!(
+                "ferrum_stdlib::array_remove(&mut {}, &mut {}_len, {} as usize)",
+                arr, arr, idx
+            )
+        }
+
+        // ── to_string is overloaded ───────────────────────────────
+        // The semantic pass filled Expr.ty on the first argument.
+        // Read it to pick the right formatter.
+        // All formatters need a FmtBuf — the emitter injects a
+        // thread-local (actually stack-local) buf at the call site.
+        "ferrum_stdlib::to_string" => {
+            let val = exprs.first().cloned().unwrap_or_default();
+            // Peek at the resolved type of the first argument
+            let ty = args.first()
+                .and_then(|a| match &a.kind {
+                    CallArgKind::Data(e) => e.ty.as_ref(),
+                    _ => None,
+                });
+            let formatter = match ty {
+                Some(Type::Integer)    => "ferrum_stdlib::integer_to_string",
+                Some(Type::Decimal)    => "ferrum_stdlib::decimal_to_string",
+                Some(Type::Percentage) => "ferrum_stdlib::percentage_to_string",
+                Some(Type::Byte)       => "ferrum_stdlib::byte_to_string",
+                Some(Type::Boolean)    => {
+                    // Boolean to_string doesn't need a buf — return directly
+                    return format!("ferrum_stdlib::boolean_to_string({})", val);
+                }
+                _ => "ferrum_stdlib::integer_to_string", // fallback
+            };
+            // Non-boolean formatters need a stack buffer
+            format!("{{ let mut _buf = ferrum_stdlib::FmtBuf::new(); {formatter}({val}, &mut _buf) }}")
+        }
+
+        // ── map needs all 5 arguments as f32 ─────────────────────
+        // Ferrum: map value, from_low, from_high, to_low, to_high
+        // All args cast to f32 for the Decimal return type.
+        "ferrum_stdlib::map" => {
+            let casted: Vec<String> = exprs.iter()
+                .map(|e| format!("({}) as f32", e))
+                .collect();
+            format!("ferrum_stdlib::map({})", casted.join(", "))
+        }
+
+        // ── Everything else: straight call ────────────────────────
+        // abs, min, max, clamp, to_integer, to_decimal,
+        // to_percentage, includes — all take plain args.
+        _ => {
+            format!("{}({})", builtin, exprs.join(", "))
+        }
     }
 }
 

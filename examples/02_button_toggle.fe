@@ -1,0 +1,44 @@
+-- Button toggle — press a button to flip LED state.
+-- Demonstrates: INPUT, Boolean state, IS operator, IS NOT,
+--               debounce-safe edge detection.
+
+-- 02_button_toggle.fe
+-- Press the button to toggle the LED on or off.
+-- Uses edge detection so one press = one toggle.
+
+DEFINE Button AS INPUT
+DEFINE Led    AS OUTPUT
+
+CONFIG {
+    TARGET      = "microbit_v2"
+    DEBOUNCE_MS = 50
+    DEBUG       = TRUE
+}
+
+CREATE Button mode_btn ON PIN 14 PULL UP
+CREATE Led    status   ON PIN 13
+
+DECLARE
+    Boolean led_on      INIT FALSE,
+    Boolean last_button INIT TRUE
+
+RUN {
+    LOOP {
+        DECLARE Boolean pressed = mode_btn IS LOW
+
+        -- Edge detection: only act on the transition HIGH→LOW
+        IF pressed AND last_button IS NOT TRUE {
+            led_on = NOT led_on
+            IF led_on IS TRUE {
+                TURN status HIGH
+                PRINT "LED on"
+            } ELSE {
+                TURN status LOW
+                PRINT "LED off"
+            }
+        }
+
+        last_button = pressed
+        DELAY 10ms
+    }
+}

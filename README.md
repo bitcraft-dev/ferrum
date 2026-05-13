@@ -87,25 +87,38 @@ ferrum/                          ← project root
 │   │   └── traits.rs
 │   └── Cargo.toml
 │
-├── stdlib/                       ← built-in functions; still the least complete crate
+├── stdlib/                       ← built-in functions (spec §13)
 │   ├── src/
-│   │   └── lib.rs
+│   │   ├── lib.rs               ← crate root and re-exports
+│   │   ├── math.rs              ← abs, clamp, map, min, max
+│   │   ├── convert.rs           ← type conversions (to_integer, to_decimal, etc.)
+│   │   ├── arrays.rs            ← array_length, array_add, array_remove
+│   │   ├── strings.rs           ← concat, includes, str_length
+│   │   └── format.rs            ← formatting utilities
 │   └── Cargo.toml
 │
-└── examples/
-    └── fun_controller.fe        ← the complete example from the spec
+└── examples/                     ← 7 progressive curriculum examples
+    ├── README.md                ← example index and running instructions
+    ├── 01_blink.fe              ← rung 1: basic output and delay
+    ├── 02_button_toggle.fe      ← rung 2: input and boolean state
+    ├── 03_traffic_light.fe      ← rung 2–3: multiple devices, EVERY, BORROW
+    ├── 04_soil_moisture.fe      ← rung 3–4: full spec with GIVE/LEND/BORROW
+    ├── 05_temperature_display.fe ← rung 3: analog input and display
+    ├── 06_rgb_mood_lamp.fe      ← rung 3–4: PWM and color cycling
+    └── 07_distance_alarm.fe     ← rung 4: pulse, clamp, advanced patterns
 ```
 
 ## Current Status
 
-Ferrum is past the compiler skeleton stage. The active codebase today includes:
+Ferrum is feature-complete at the architecture level. The active codebase today includes:
 
 - a working CLI driver with token, AST, check, and full compile modes
 - a lexer, parser, AST, semantic analysis, diagnostics, and Rust code generation pipeline
 - a real no_std runtime bridge with traits, scheduler, debounce logic, and board implementations for micro:bit v2 and RP2040
-- a standard library crate that still needs fuller built-in coverage
+- a complete stdlib crate with all spec §13 built-in functions across five modules (math, convert, arrays, strings, format)
+- seven progressive curriculum examples demonstrating all language features from basic I/O to advanced patterns
 
-The main remaining product gap is the stdlib. Runtime support is present and should be documented as such.
+Remaining work is primarily integration (end-to-end testing, generated code validation against real hardware, VS Code extension).
 
 ## Compiler Architecture
 
@@ -285,7 +298,7 @@ RUN {
 }
 ```
 
-See [examples/fun_controller.fe](examples/fun_controller.fe) for a complete real-world example.
+See [examples/README.md](examples/README.md) for a complete index of all examples and their running instructions.
 
 ## Supported Targets
 
@@ -309,9 +322,9 @@ See [examples/fun_controller.fe](examples/fun_controller.fe) for a complete real
 | Device Checker | ✅ Complete (pin uniqueness, ambiguous SET detection) |
 | Code Generation | ✅ Complete (Rust emission, Cargo metadata, linker setup) |
 | Runtime | ✅ Complete (traits, scheduler, debounce, microbit_v2, rp2040) |
-| Stdlib | 🚧 Partial (crate exists, built-ins still expanding) |
+| Stdlib | ✅ Complete (math, convert, arrays, strings, format; spec §13 full coverage) |
 | Diagnostics System | ✅ Complete (comprehensive DiagnosticKind coverage) |
-| Examples | ✅ Present |
+| Examples | ✅ Complete (7 progressive examples, rung 1–4 coverage) |
 | License & Attribution | ✅ Complete (dual Apache 2.0 / GPL-3.0-or-later) |
 
 ## Documentation

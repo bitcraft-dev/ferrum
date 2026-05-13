@@ -40,6 +40,10 @@ impl<'a> DeclarationCollector<'a> {
     }
 
     pub fn collect(mut self, program: &Program) -> Vec<Diagnostic> {
+        // Register builtins before collecting user declarations so
+        // CALLs to builtins resolve in the symbol table.
+        self.register_builtins();
+
         // Order matters: DEFINE before CREATE (CREATE references DEFINE),
         // DECLARE and FUNCTION can be in any order relative to each other.
         for item in &program.defines   { self.collect_define(item);   }
@@ -50,6 +54,68 @@ impl<'a> DeclarationCollector<'a> {
         let mut all = self.diagnostics;
         all.extend(self.symbols.take_diagnostics());
         all
+    }
+
+    fn register_builtins(&mut self) {
+        use crate::semantic::symbol_table::{ParamInfo, ParamKind, Symbol};
+        use crate::lexer::token::{Ident, Span};
+
+        // Helper: build a data-only param
+        let p = |name: &str, ty: Type| -> ParamInfo {
+            ParamInfo {
+                name: Ident::new(name, Span::synthetic(
+                    std::sync::Arc::new("<builtin>".into())
+                )),
+                kind: ParamKind::Data(ty),
+            }
+        };
+
+        // Helper: register one builtin function
+        let mut reg = |key: &str, params: Vec<ParamInfo>, ret: Type| {
+            let ident = Ident::new(key, Span::synthetic(
+                std::sync::Arc::new("<builtin>".into())
+            ));
+            self.symbols.insert(Symbol {
+                ident:      ident.clone(),
+                kind:       SymbolKind::Function {
+                    params,
+                    return_type: ret,
+                },
+                ty:         Type::Void,
+                defined_at: ident.span.clone(),
+            });
+        };
+
+        // ── §13.1 Mathematical ────────────────────────────────────
+        reg("abs",   vec![p("value", Type::Decimal)],  Type::Decimal);
+        reg("min",   vec![p("a", Type::Decimal), p("b", Type::Decimal)], Type::Decimal);
+        reg("max",   vec![p("a", Type::Decimal), p("b", Type::Decimal)], Type::Decimal);
+        reg("clamp", vec![
+            p("value",   Type::Decimal),
+            p("min_val", Type::Decimal),
+            p("max_val", Type::Decimal),
+        ], Type::Decimal);
+        reg("map", vec![
+            p("value",     Type::Decimal),
+            p("from_low",  Type::Decimal),
+            p("from_high", Type::Decimal),
+            p("to_low",    Type::Decimal),
+            p("to_high",   Type::Decimal),
+        ], Type::Decimal);
+
+        // ── §13.2 Type conversion ─────────────────────────────────
+        reg("to_integer",    vec![p("value", Type::Decimal)],     Type::Integer);
+        reg("to_decimal",    vec![p("value", Type::Integer)],     Type::Decimal);
+        reg("to_percentage", vec![p("value", Type::Decimal)],     Type::Percentage);
+        reg("to_string",     vec![p("value", Type::Decimal)],     Type::String);
+
+        // ── §13.3 String operations ───────────────────────────────
+        reg("length",   vec![p("value", Type::String)],           Type::Integer);
+        reg("includes", vec![p("haystack", Type::String), p("needle", Type::String)], Type::Boolean);
+
+        // ── §13.4 Array operations ────────────────────────────────
+        reg("add",    vec![p("array", Type::Void), p("value", Type::Void)], Type::Void);
+        reg("remove", vec![p("array", Type::Void), p("index", Type::Integer)], Type::Void);
     }
 
     // ── DEFINE ───────────────────────────────────────────────────

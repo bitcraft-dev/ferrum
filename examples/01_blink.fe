@@ -1,0 +1,24 @@
+-- Blink — the embedded "hello world".
+-- Turns an LED on and off in a 1-second cycle.
+-- Demonstrates: DEFINE, CREATE, RUN, LOOP, TURN, DELAY
+
+-- 01_blink.fe
+-- The simplest possible Ferrum program.
+-- Flash an LED on and off once per second.
+
+DEFINE Led AS OUTPUT
+
+CONFIG {
+    TARGET = "microbit_v2"
+}
+
+CREATE Led status ON PIN 13
+
+RUN {
+    LOOP {
+        TURN status HIGH
+        DELAY 500ms
+        TURN status LOW
+        DELAY 500ms
+    }
+}

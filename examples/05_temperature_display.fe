@@ -1,0 +1,67 @@
+// Demonstrates: ANALOG_INPUT, DISPLAY, to_string, type conversion,
+//               EVERY for periodic refresh, map function.
+
+/*
+-- 05_temperature_display.fe
+-- Read temperature from an analog sensor (e.g. TMP36) and display
+-- the value on an LCD screen. Warn with LED if temperature is high.
+-- Refresh the display every 2 seconds.
+
+DEFINE
+    TempSensor AS ANALOG_INPUT,
+    LcdScreen  AS { OUTPUT, DISPLAY LCD },
+    WarningLed AS OUTPUT
+
+CONFIG {
+    TARGET = "microbit_v2"
+    DEBUG  = TRUE
+}
+
+CREATE
+    TempSensor temp_sensor ON PIN 0,
+    LcdScreen  screen      ON { PIN 5, PIN 6 },
+    WarningLed warn_led    ON PIN 13
+
+DECLARE
+    Decimal temperature   INIT 0.0,
+    Decimal hot_threshold INIT 35.0,
+    Decimal raw_voltage   INIT 0.0
+
+DECLARE CONSTANT Decimal VREF       = 3.3
+DECLARE CONSTANT Decimal ADC_MAX    = 1023.0
+DECLARE CONSTANT Decimal TMP36_ZERO = 0.5
+DECLARE CONSTANT Decimal TMP36_MV   = 0.01
+
+FUNCTION raw_to_celsius Decimal: raw -> Decimal {
+    -- TMP36: Vout = 0.5V + (temp * 10mV/°C)
+    -- temp = (Vout - 0.5) / 0.01
+    DECLARE Decimal voltage = CALL map raw, 0.0, ADC_MAX, 0.0, VREF
+    RETURN voltage - TMP36_ZERO / TMP36_MV
+}
+
+FUNCTION log_temp Decimal: temp {
+    PRINT "Temp: " + CALL to_string temp + "C"
+}
+
+RUN {
+    EVERY 2000ms {
+        -- Read sensor and convert to celsius
+        DECLARE Decimal raw = CALL to_decimal READ temp_sensor
+        temperature = CALL raw_to_celsius raw
+
+        -- Update display
+        SET screen CALL to_string temperature + " C"
+
+        -- High temperature warning
+        IF temperature > hot_threshold {
+            TURN warn_led HIGH
+            CALL log_temp temperature
+        } ELSE {
+            TURN warn_led LOW
+        }
+    }
+
+    LOOP {
+        DELAY 100ms
+    }
+}

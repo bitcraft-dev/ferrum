@@ -1,6 +1,13 @@
 [package]
-name = "stdlib"
+name    = "ferrum-stdlib"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "ferrum_stdlib"
+
 [dependencies]
+# Pure no_std — no external dependencies
+
+[dev-dependencies]
+# Tests run on host with std

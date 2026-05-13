@@ -1,0 +1,80 @@
+-- Demonstrates: PULSE TRIGGER/ECHO composite device, Buzzer OUTPUT,
+--               EVERY for distance polling, RANGE for alarm pattern,
+--               clamp and map for distance scaling.
+
+/*
+-- 07_distance_alarm.fe
+-- Sound a buzzer when an object comes within 20cm.
+-- Buzz faster as the object gets closer.
+-- Uses an HC-SR04 ultrasonic sensor.
+
+DEFINE
+    Sonar AS {
+        PULSE TRIGGER,
+        PULSE ECHO
+    },
+    Buzzer AS OUTPUT,
+    Led    AS OUTPUT
+
+CONFIG {
+    TARGET = "microbit_v2"
+    DEBUG  = TRUE
+}
+
+CREATE
+    Sonar  sonar  ON { trigger: PIN 8, echo: PIN 9 },
+    Buzzer buzzer ON PIN 10,
+    Led    warn   ON PIN 13
+
+DECLARE
+    Decimal  distance_cm    INIT 100.0,
+    Boolean  alarm_active   INIT FALSE,
+    Integer  buzz_interval  INIT 500
+
+DECLARE CONSTANT Decimal ALARM_THRESHOLD = 20.0
+DECLARE CONSTANT Decimal MIN_BUZZ_MS     = 50.0
+DECLARE CONSTANT Decimal MAX_BUZZ_MS     = 500.0
+
+FUNCTION measure_distance_cm Decimal: raw_us -> Decimal {
+    -- Speed of sound: 343 m/s = 0.0343 cm/µs
+    -- distance = (echo_us / 2) * 0.0343
+    RETURN raw_us / 2.0 * 0.0343
+}
+
+FUNCTION buzz_pattern BORROW Buzzer: buz, Integer: on_ms {
+    TURN buz HIGH
+    DELAY on_ms ms
+    TURN buz LOW
+    DELAY on_ms ms
+}
+
+RUN {
+    EVERY 100ms {
+        -- Measure distance
+        DECLARE Decimal raw_us = CALL to_decimal READ sonar
+        distance_cm = CALL measure_distance_cm raw_us
+
+        PRINT "Distance: " + distance_cm + " cm"
+
+        IF distance_cm < ALARM_THRESHOLD {
+            alarm_active = TRUE
+            warn = HIGH
+            -- Scale buzz speed: closer = faster
+            DECLARE Decimal mapped = CALL map distance_cm,
+                0.0, ALARM_THRESHOLD,
+                MIN_BUZZ_MS, MAX_BUZZ_MS
+            buzz_interval = CALL to_integer CALL clamp mapped, MIN_BUZZ_MS, MAX_BUZZ_MS
+        } ELSE {
+            alarm_active = FALSE
+            TURN warn LOW
+            TURN buzzer LOW
+        }
+    }
+
+    LOOP {
+        IF alarm_active IS TRUE {
+            CALL buzz_pattern BORROW buzzer, buzz_interval
+        }
+        DELAY 10ms
+    }
+}

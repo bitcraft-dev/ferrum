@@ -1,0 +1,112 @@
+-- Demonstrates every major language feature including ownership.
+
+-- 04_soil_moisture.fe
+-- Automatic plant watering system.
+-- Reads soil moisture via analog sensor and drives a water pump.
+-- Mode button toggles between automatic and manual watering.
+-- This is the complete example from the Ferrum language spec §16.
+
+DEFINE
+    Button        AS INPUT,
+    MoistureSensor AS ANALOG_INPUT,
+    WaterPump AS {
+        OUTPUT ENABLE,
+        PWM SPEED
+    },
+    StatusLed AS {
+        OUTPUT,
+        PWM BRIGHTNESS
+    }
+
+CONFIG {
+    TARGET      = "microbit_v2"
+    DEFAULT_PULL_UP = TRUE
+    DEBOUNCE_MS = 50
+    DEBUG       = TRUE
+}
+
+CREATE
+    Button         mode_btn ON PIN 14,
+    MoistureSensor soil     ON PIN 0,
+    WaterPump      pump     ON {
+        enable: PIN 1,
+        speed:  PIN 2
+    } INIT {
+        enable: LOW,
+        speed:  0.0
+    },
+    StatusLed led ON {
+        output:     PIN 3,
+        brightness: PIN 4
+    } INIT {
+        output:     LOW,
+        brightness: 0.0
+    }
+
+DECLARE
+    Percentage moisture      INIT 0.0,
+    Percentage dry_threshold INIT 30.0,
+    Boolean    auto_mode     INIT TRUE,
+    Boolean    last_button   INIT TRUE
+
+-- Borrows the LED for a single flash.
+-- BORROW: caller keeps ownership after the call.
+FUNCTION pulse_led BORROW StatusLed: led {
+    TURN led HIGH
+    DELAY 100ms
+    TURN led LOW
+}
+
+-- Takes full ownership of the pump for the entire watering cycle.
+-- GIVE: caller cannot use pump after this call returns.
+FUNCTION run_pump GIVE WaterPump: pump, Percentage: speed {
+    TURN pump ENABLE HIGH
+    SET pump SPEED speed
+    DELAY 5000ms
+    TURN pump ENABLE LOW
+    SET pump SPEED 0.0
+}
+
+FUNCTION get_pump_speed Percentage: moisture, Percentage: threshold {
+    IF moisture >= threshold {
+        RETURN 0.0
+    }
+    RETURN CALL map threshold - moisture, 0.0, threshold, 0.0, 100.0
+}
+
+FUNCTION log_message String: msg {
+    PRINT "LOG: " + msg
+}
+
+RUN {
+    EVERY 10000ms {
+        PRINT "Status: " +
+              IF auto_mode IS TRUE { "Auto" } ELSE { "Manual" } +
+              ", Moisture: " + moisture + "%"
+    }
+
+    LOOP {
+        moisture = READ_PERCENT soil
+
+        CALL pulse_led BORROW led
+        SET led BRIGHTNESS CALL clamp 100.0 - moisture, 0.0, 100.0
+
+        IF moisture < dry_threshold AND auto_mode IS TRUE {
+            DECLARE Percentage speed = CALL get_pump_speed moisture, dry_threshold
+            CALL log_message "Watering at " + speed + "%"
+            CALL run_pump GIVE pump, speed
+        }
+
+        DECLARE Boolean current_button = mode_btn IS LOW
+
+        IF current_button AND last_button IS NOT TRUE {
+            auto_mode = NOT auto_mode
+            DECLARE String mode_str = IF auto_mode IS TRUE { "Auto" } ELSE { "Manual" }
+            CALL log_message "Switched to " + mode_str + " mode"
+            DELAY 50ms
+        }
+
+        last_button = current_button
+        DELAY 100ms
+    }
+}

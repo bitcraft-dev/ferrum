@@ -1,0 +1,83 @@
+// Demonstrates: PWM RED/GREEN/BLUE, composite device with three
+//               PWM interfaces, BORROW with multi-interface device,
+//               smooth colour cycling using map, FOR with RANGE.
+
+/*
+-- 06_rgb_mood_lamp.fe
+-- Smoothly cycle an RGB LED through a colour sequence.
+-- Button press skips to the next colour.
+
+DEFINE
+    RgbLed AS {
+        PWM RED,
+        PWM GREEN,
+        PWM BLUE
+    },
+    Button AS INPUT
+
+CONFIG {
+    TARGET      = "microbit_v2"
+    DEBOUNCE_MS = 50
+}
+
+CREATE
+    RgbLed lamp   ON { PIN 3, PIN 4, PIN 5 } INIT { 0.0, 0.0, 0.0 },
+    Button skip   ON PIN 14 PULL UP
+
+DECLARE
+    Integer colour_index INIT 0,
+    Boolean last_skip    INIT TRUE
+
+DECLARE CONSTANT Integer COLOUR_COUNT = 6
+
+-- Colour table: [red, green, blue] as Percentage each
+-- 0=Red  1=Green  2=Blue  3=Yellow  4=Cyan  5=Magenta
+DECLARE Percentage[6] reds   INIT [100.0, 0.0,   0.0,   100.0, 0.0,   100.0]
+DECLARE Percentage[6] greens INIT [0.0,   100.0, 0.0,   100.0, 100.0, 0.0]
+DECLARE Percentage[6] blues  INIT [0.0,   0.0,   100.0, 0.0,   100.0, 100.0]
+
+FUNCTION set_colour BORROW RgbLed: lamp, Percentage: r, Percentage: g, Percentage: b {
+    SET lamp RED   r / 100.0
+    SET lamp GREEN g / 100.0
+    SET lamp BLUE  b / 100.0
+}
+
+FUNCTION fade_to BORROW RgbLed: lamp,
+                  Percentage: from_r, Percentage: from_g, Percentage: from_b,
+                  Percentage: to_r,   Percentage: to_g,   Percentage: to_b {
+    FOR step IN RANGE 0, 20 {
+        DECLARE Percentage t = CALL to_percentage step * 5
+        DECLARE Percentage r = CALL map t, 0.0, 100.0, from_r, to_r
+        DECLARE Percentage g = CALL map t, 0.0, 100.0, from_g, to_g
+        DECLARE Percentage b = CALL map t, 0.0, 100.0, from_b, to_b
+        CALL set_colour BORROW lamp, r, g, b
+        DELAY 50ms
+    }
+}
+
+RUN {
+    LOOP {
+        DECLARE Integer next_index = colour_index + 1
+        IF next_index >= COLOUR_COUNT {
+            next_index = 0
+        }
+
+        CALL fade_to BORROW lamp,
+            reds[colour_index],   greens[colour_index],   blues[colour_index],
+            reds[next_index],     greens[next_index],     blues[next_index]
+
+        colour_index = next_index
+
+        -- Check skip button
+        DECLARE Boolean skip_pressed = skip IS LOW
+        IF skip_pressed AND last_skip IS NOT TRUE {
+            colour_index = colour_index + 1
+            IF colour_index >= COLOUR_COUNT {
+                colour_index = 0
+            }
+        }
+        last_skip = skip_pressed
+
+        DELAY 100ms
+    }
+}
