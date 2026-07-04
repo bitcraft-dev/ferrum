@@ -29,7 +29,7 @@
 // The cfg gate is set by the generated Cargo.toml features section.
 #[cfg(feature = "microbit_v2")]
 
-use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPwm};
+use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPulse, FerrumPwm};
 
 // ── Output pin ────────────────────────────────────────────────────
 
@@ -213,6 +213,91 @@ impl FerrumDelay for microbit::hal::Delay {
     fn delay_us(&mut self, us: u32) {
         use embedded_hal::blocking::delay::DelayUs;
         DelayUs::delay_us(self, us);
+    }
+}
+
+// ── Pulse (TRIGGER + ECHO) ──────────────────────────────────────────
+//
+// Used by a PULSE composite device (e.g. an HC-SR04 ultrasonic
+// distance sensor): one output pin sends a brief trigger pulse, one
+// input pin's HIGH duration afterward is the echo's time-of-flight.
+// This struct is the ONLY board-specific code for PULSE support —
+// generated code (and the rest of the compiler) only ever calls the
+// `FerrumPulse` trait's two methods on it. A different board adds
+// PULSE support by writing its own equivalent struct against its own
+// timing primitives and pointing `BoardProfile::pulse_pin_type` /
+// `pulse_pin_new` at it; nothing else changes.
+//
+// TIMING: the nRF52833 is a Cortex-M4, which has the DWT unit's
+// free-running cycle counter (CYCCNT). We read it before/after the
+// echo pulse and convert the cycle delta to microseconds using the
+// core clock frequency. A board without DWT (e.g. RP2040's Cortex-M0+)
+// would need a different mechanism internally — see rp2040.rs — but
+// that's invisible from here, which is the point of the trait boundary.
+pub struct MicrobitPulsePin {
+    trigger: Pin<Output<PushPull>>,
+    echo:    Pin<Input<Floating>>,
+}
+
+impl MicrobitPulsePin {
+    pub fn new(trigger: Pin<Output<PushPull>>, echo: Pin<Input<Floating>>) -> Self {
+        MicrobitPulsePin { trigger, echo }
+    }
+}
+
+/// nRF52833 default core clock (HFCLK) in Hz.
+const CPU_HZ: u32 = 64_000_000;
+/// Give up waiting for / measuring an echo after this long — an
+/// HC-SR04's own datasheet caps a valid round trip well under this,
+/// so a disconnected sensor or one facing open air can't hang the
+/// caller forever.
+const TIMEOUT_US: u32 = 30_000;
+
+fn cycles_to_us(cycles: u32) -> u32 {
+    cycles / (CPU_HZ / 1_000_000)
+}
+
+fn us_to_cycles(us: u32) -> u32 {
+    us.saturating_mul(CPU_HZ / 1_000_000)
+}
+
+fn cycle_count() -> u32 {
+    cortex_m::peripheral::DWT::cycle_count()
+}
+
+impl FerrumPulse for MicrobitPulsePin {
+    type Error = core::convert::Infallible;
+
+    fn trigger_pulse(&mut self, duration_us: u32) -> Result<(), Self::Error> {
+        use embedded_hal::digital::v2::OutputPin;
+        OutputPin::set_high(&mut self.trigger)?;
+        let start = cycle_count();
+        while cycle_count().wrapping_sub(start) < us_to_cycles(duration_us) {}
+        OutputPin::set_low(&mut self.trigger)?;
+        Ok(())
+    }
+
+    fn read_echo_us(&mut self) -> Result<u32, Self::Error> {
+        use embedded_hal::digital::v2::InputPin;
+
+        // Wait for the sensor to start its echo pulse.
+        let wait_start = cycle_count();
+        while InputPin::is_low(&self.echo)? {
+            if cycles_to_us(cycle_count().wrapping_sub(wait_start)) > TIMEOUT_US {
+                return Ok(0); // no echo — sensor likely not connected
+            }
+        }
+
+        // Measure how long it stays high.
+        let echo_start = cycle_count();
+        while InputPin::is_high(&self.echo)? {
+            if cycles_to_us(cycle_count().wrapping_sub(echo_start)) > TIMEOUT_US {
+                break; // out of range
+            }
+        }
+        let echo_end = cycle_count();
+
+        Ok(cycles_to_us(echo_end.wrapping_sub(echo_start)))
     }
 }
 

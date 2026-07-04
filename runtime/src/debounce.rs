@@ -28,7 +28,12 @@ pub struct Debouncer {
     threshold_ms: u32,
     counter_ms:   u32,
     stable_state: bool,
-    last_raw:     bool,
+    /// `None` until the first sample arrives. Using an `Option` (rather
+    /// than defaulting to `false`) keeps the very first reading from
+    /// being misread as a "changed" transition when it happens to be
+    /// `true`, which would otherwise throw away that sample's own
+    /// `delta_ms` and require a full extra threshold's worth of ticks.
+    last_raw:     Option<bool>,
 }
 
 impl Debouncer {
@@ -37,7 +42,7 @@ impl Debouncer {
             threshold_ms,
             counter_ms:   0,
             stable_state: false,
-            last_raw:     false,
+            last_raw:     None,
         }
     }
 
@@ -45,16 +50,17 @@ impl Debouncer {
     /// `delta_ms` is time elapsed since last call.
     /// Returns the debounced (stable) state.
     pub fn sample(&mut self, raw: bool, delta_ms: u32) -> bool {
-        if raw == self.last_raw {
+        if self.last_raw == Some(raw) {
             // Signal is stable — accumulate time
             self.counter_ms = self.counter_ms.saturating_add(delta_ms);
-            if self.counter_ms >= self.threshold_ms {
-                self.stable_state = raw;
-            }
         } else {
-            // Signal changed — reset counter
-            self.counter_ms = 0;
-            self.last_raw   = raw;
+            // Signal changed (or this is the first-ever sample) —
+            // restart timing from this sample's own delta, not zero.
+            self.counter_ms = delta_ms;
+            self.last_raw   = Some(raw);
+        }
+        if self.counter_ms >= self.threshold_ms {
+            self.stable_state = raw;
         }
         self.stable_state
     }
@@ -63,7 +69,7 @@ impl Debouncer {
     /// Used to set the initial state at program start.
     pub fn force(&mut self, state: bool) {
         self.stable_state = state;
-        self.last_raw     = state;
+        self.last_raw     = Some(state);
         self.counter_ms   = self.threshold_ms; // already stable
     }
 }

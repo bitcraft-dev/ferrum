@@ -235,6 +235,7 @@ fn diagnostic_code(kind: &DiagnosticKind) -> &'static str {
         DiagnosticKind::DuplicateDefinition { .. }       => "E037",
         DiagnosticKind::UnknownConfigKey { .. }          => "E038",
         DiagnosticKind::ConfigTypeMismatch { .. }        => "E039",
+        DiagnosticKind::EveryPeriodMustBeLiteral          => "E040",
         // Warnings
         DiagnosticKind::UnusedVariable { .. }            => "W001",
         DiagnosticKind::DelayExceedsEveryPeriod { .. }   => "W002",

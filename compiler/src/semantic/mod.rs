@@ -91,13 +91,13 @@ mod semantic_integration_tests {
     #[test]
     fn well_formed_program_has_no_errors() {
         let src = r#"
-DEFINE Button AS INPUT
-DEFINE Led AS OUTPUT
-
 CONFIG {
     TARGET = "microbit_v2"
     DEBUG = TRUE
 }
+
+DEFINE Button AS INPUT
+DEFINE Led AS OUTPUT
 
 CREATE Button mode_btn ON PIN 14
 CREATE Led status ON PIN 13
@@ -121,6 +121,110 @@ RUN {
             "unexpected errors: {:?}",
             result.errors().iter().map(|e| e.to_string()).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn array_index_resolves_element_type() {
+        let src = r#"
+CONFIG {
+    TARGET = "microbit_v2"
+}
+
+DECLARE Integer[3] readings INIT [1, 2, 3]
+DECLARE Integer selected INIT 0
+
+RUN {
+    LOOP {
+        selected = readings[0]
+        DELAY 100ms
+    }
+}
+        "#;
+        let result = analyse_src(src);
+        assert!(
+            !result.has_errors(),
+            "unexpected errors: {:?}",
+            result.errors().iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn array_index_with_non_integer_is_reported() {
+        let src = r#"
+CONFIG {
+    TARGET = "microbit_v2"
+}
+
+DECLARE Integer[3] readings INIT [1, 2, 3]
+DECLARE Integer selected INIT 0
+
+RUN {
+    LOOP {
+        selected = readings["nope"]
+        DELAY 100ms
+    }
+}
+        "#;
+        let result = analyse_src(src);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn read_on_pulse_device_resolves_to_integer() {
+        let src = r#"
+CONFIG {
+    TARGET = "microbit_v2"
+}
+
+DEFINE Sonar AS {
+    PULSE TRIGGER,
+    PULSE ECHO
+}
+
+CREATE Sonar sonar ON { trigger: PIN 8, echo: PIN 9 }
+
+DECLARE Integer echo_us INIT 0
+
+RUN {
+    LOOP {
+        echo_us = READ sonar
+        DELAY 100ms
+    }
+}
+        "#;
+        let result = analyse_src(src);
+        assert!(
+            !result.has_errors(),
+            "unexpected errors: {:?}",
+            result.errors().iter().map(|e| e.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn read_percent_on_pulse_device_is_rejected() {
+        let src = r#"
+CONFIG {
+    TARGET = "microbit_v2"
+}
+
+DEFINE Sonar AS {
+    PULSE TRIGGER,
+    PULSE ECHO
+}
+
+CREATE Sonar sonar ON { trigger: PIN 8, echo: PIN 9 }
+
+DECLARE Percentage p INIT 0.0
+
+RUN {
+    LOOP {
+        p = READ_PERCENT sonar
+        DELAY 100ms
+    }
+}
+        "#;
+        let result = analyse_src(src);
+        assert!(result.has_errors());
     }
 
     #[test]

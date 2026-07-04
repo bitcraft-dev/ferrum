@@ -43,8 +43,25 @@ pub struct BoardProfile {
     pub display_type:     &'static str,
     /// Board init code — pasted into the top of generated main().
     pub board_init:       &'static str,
-    /// How to get a pin by number: format string with {N} = pin number.
+    /// How to get an output-configured pin by number: format string
+    /// with {N} = pin number.
     pub pin_access:       &'static str,
+    /// How to get an input-configured pin by number: format string
+    /// with {N} = pin number. Needed anywhere a device field is read
+    /// rather than driven — e.g. a PULSE device's ECHO pin.
+    pub pin_access_input: &'static str,
+    /// The type expression for a PULSE (TRIGGER + ECHO) device — a
+    /// board-specific struct implementing `FerrumPulse` (see
+    /// `ferrum_runtime::traits`). Generated code only ever calls the
+    /// trait's `trigger_pulse`/`read_echo_us` methods on it, never
+    /// anything board-specific — adding a new board's PULSE support
+    /// means implementing `FerrumPulse` for a new struct in that
+    /// board's runtime module and pointing these two fields at it;
+    /// nothing in the compiler changes.
+    pub pulse_pin_type:   &'static str,
+    /// Constructor expression for `pulse_pin_type`: format string with
+    /// {TRIGGER} and {ECHO} = the trigger/echo pin-access expressions.
+    pub pulse_pin_new:    &'static str,
     /// Scheduler model for EVERY blocks.
     pub scheduler_model:  SchedulerModel,
     /// Serial/UART write macro or function name.
@@ -87,10 +104,13 @@ static MICROBIT_V2: BoardProfile = BoardProfile {
     board_init: "\
     let board = microbit::Board::take().unwrap();\n    \
     let mut delay = microbit::hal::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());\n",
-    pin_access:      "board.pins.p{N}.into_push_pull_output()",
+    pin_access:       "board.pins.p{N}.into_push_pull_output()",
+    pin_access_input: "board.pins.p{N}.into_floating_input()",
+    pulse_pin_type:   "ferrum_runtime::boards::microbit_v2::MicrobitPulsePin",
+    pulse_pin_new:    "ferrum_runtime::boards::microbit_v2::MicrobitPulsePin::new({TRIGGER}, {ECHO})",
     scheduler_model: SchedulerModel::PollingTick,
     serial_write:    "defmt::println!",
-    delay_ms:        "delay.delay_ms({MS}u32)",
+    delay_ms:        "delay.delay_ms({MS})",
 };
 
 static RP2040: BoardProfile = BoardProfile {
@@ -113,7 +133,10 @@ static RP2040: BoardProfile = BoardProfile {
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());\n    \
     let sio   = rp_pico::hal::Sio::new(pac.SIO);\n    \
     let pins  = rp_pico::Pins::new(pac.IO_BANK0, pac.PADS_BANK0, sio.gpio_bank0, &mut pac.RESETS);\n",
-    pin_access:      "pins.gpio{N}.into_push_pull_output()",
+    pin_access:       "pins.gpio{N}.into_push_pull_output()",
+    pin_access_input: "pins.gpio{N}.into_floating_input()",
+    pulse_pin_type:   "ferrum_runtime::boards::rp2040::Rp2040PulsePin",
+    pulse_pin_new:    "ferrum_runtime::boards::rp2040::Rp2040PulsePin::new({TRIGGER}, {ECHO})",
     scheduler_model: SchedulerModel::PollingTick,
     serial_write:    "defmt::println!",
     delay_ms:        "delay.delay_ms({MS})",

@@ -315,6 +315,11 @@ pub enum DiagnosticKind {
         expected: String,
         found:    String,
     },
+
+    /// EVERY's period must be a compile-time literal duration (it
+    /// feeds the board's polling schedule) — a variable/expression
+    /// duration is only allowed on DELAY.
+    EveryPeriodMustBeLiteral,
 }
 
 // ----------------------------------------------------------------

@@ -173,7 +173,7 @@ fn run_compile(source: &str, path: &str) {
     let cargo_toml_path = format!("{}/Cargo.toml", out_dir);
     let cargo_toml_content = format!(
         "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n{}\n[workspace]\n",
-        stem, codegen_result.cargo_deps
+        cargo_package_name(stem), codegen_result.cargo_deps
     );
     match std::fs::write(&cargo_toml_path, &cargo_toml_content) {
         Ok(_)  => println!("✓ Written to {}", cargo_toml_path),
@@ -206,6 +206,19 @@ fn run_compile(source: &str, path: &str) {
     println!("✓ Generated project in {}/", out_dir);
 }
 
+/// Turn a source file stem into a valid Cargo package name.
+///
+/// Cargo package names can't start with a digit (`01_blink` is
+/// rejected outright by `cargo check`/`cargo build`), which every one
+/// of Ferrum's numbered example files hits. The *directory* name is
+/// left as the raw stem — only Cargo's `[package] name` needs this.
+fn cargo_package_name(stem: &str) -> String {
+    match stem.chars().next() {
+        Some(c) if c.is_ascii_digit() => format!("ferrum_{}", stem),
+        _ => stem.to_string(),
+    }
+}
+
 // ── Shared lex + parse ────────────────────────────────────────────
 
 fn lex_and_parse(source: &str, path: &str) -> ast::Program {
@@ -231,4 +244,21 @@ fn lex_and_parse(source: &str, path: &str) -> ast::Program {
         eprintln!("error: parse produced no program");
         process::exit(1);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_package_name_prefixes_leading_digit() {
+        assert_eq!(cargo_package_name("01_blink"), "ferrum_01_blink");
+        assert_eq!(cargo_package_name("07_distance_alarm"), "ferrum_07_distance_alarm");
+    }
+
+    #[test]
+    fn cargo_package_name_leaves_valid_names_alone() {
+        assert_eq!(cargo_package_name("soil_moisture"), "soil_moisture");
+        assert_eq!(cargo_package_name("output"), "output");
+    }
 }

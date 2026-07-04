@@ -218,7 +218,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_create(&mut self, item: &mut CreateItem) {
         // Resolve the device type
-        let def = match self.symbols.lookup(&item.device_type.key) {
+        let def = match self.symbols.lookup_device_type(&item.device_type.key) {
             Some(sym) => sym.clone(),
             None => {
                 // Already reported as undefined by symbol table population
@@ -501,7 +501,22 @@ impl<'a> TypeChecker<'a> {
 
         // Enforce return type consistency (constraint 18)
         let fn_return_type = self.resolve_return_type(func);
-        func.return_type = Some(fn_return_type);
+        func.return_type = Some(fn_return_type.clone());
+
+        // declaration_collector registers this function's symbol with
+        // return_type: Type::Void as a placeholder ("until the type
+        // checker fills it in" — see its comment) since it runs before
+        // any function body has been analysed. This is that fill-in:
+        // without it, every call site that reads the return type from
+        // the symbol table (check_call_expr, used for both inline
+        // DECLARE-via-CALL and CALL nested in a general expression)
+        // sees Void forever, regardless of what the function actually
+        // returns.
+        if let Some(sym) = self.symbols.lookup_mut(&func.name.key) {
+            if let SymbolKind::Function { return_type, .. } = &mut sym.kind {
+                *return_type = fn_return_type;
+            }
+        }
 
         self.symbols.pop_scope();
         self.current_fn = None;
@@ -565,30 +580,60 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_every_block(&mut self, block: &mut EveryBlock) {
+        // EVERY's period feeds the board's polling schedule, which is
+        // built at compile time — it can't be a variable duration.
+        let period_ms = block.period.as_millis_literal();
+        if period_ms.is_none() {
+            self.emit(Diagnostic::error(
+                DiagnosticKind::EveryPeriodMustBeLiteral,
+                block.period.span.clone(),
+                "EVERY's period must be a fixed duration like '1000ms', not a variable. \
+                 The board's polling schedule is built at compile time.",
+                Some("Use a literal duration: EVERY 1000ms { ... }".into()),
+            ));
+        }
+
         self.symbols.push_scope("EVERY block");
         for stmt in &mut block.body {
-            // Delay-exceeds-period warning (constraint 16)
+            // Delay-exceeds-period warning (constraint 16) — only
+            // checkable when both sides are compile-time literals.
             if let StmtKind::Delay(d) = &stmt.kind {
-                if d.duration.as_millis() >= block.period.as_millis() {
-                    self.emit(Diagnostic::warning(
-                        DiagnosticKind::DelayExceedsEveryPeriod {
-                            delay_ms:  d.duration.as_millis(),
-                            period_ms: block.period.as_millis(),
-                        },
-                        d.span.clone(),
-                        format!(
-                            "DELAY {}ms inside EVERY {}ms may cause timing violations. \
-                             The delay equals or exceeds the scheduled period.",
-                            d.duration.as_millis(),
-                            block.period.as_millis()
-                        ),
-                        Some("Reduce the delay or increase the EVERY period.".into()),
-                    ));
+                if let (Some(delay_ms), Some(period_ms)) = (d.duration.as_millis_literal(), period_ms) {
+                    if delay_ms >= period_ms {
+                        self.emit(Diagnostic::warning(
+                            DiagnosticKind::DelayExceedsEveryPeriod { delay_ms, period_ms },
+                            d.span.clone(),
+                            format!(
+                                "DELAY {}ms inside EVERY {}ms may cause timing violations. \
+                                 The delay equals or exceeds the scheduled period.",
+                                delay_ms, period_ms
+                            ),
+                            Some("Reduce the delay or increase the EVERY period.".into()),
+                        ));
+                    }
                 }
             }
             self.check_statement(stmt);
         }
         self.symbols.pop_scope();
+    }
+
+    fn check_delay(&mut self, stmt: &mut DelayStmt) {
+        if let DurationValue::Expr(expr) = &mut stmt.duration.value {
+            let ty = self.check_expr(expr);
+            if !matches!(ty, Type::Integer) {
+                self.emit(Diagnostic::error(
+                    DiagnosticKind::TypeMismatch {
+                        expected: "Integer".into(),
+                        found:    type_name(&ty).into(),
+                        context:  "DELAY duration".into(),
+                    },
+                    expr.span.clone(),
+                    format!("DELAY duration must be an Integer, found {}.", type_name(&ty)),
+                    None,
+                ));
+            }
+        }
     }
 
     fn check_top_if(&mut self, block: &mut TopIfBlock) {
@@ -622,7 +667,7 @@ impl<'a> TypeChecker<'a> {
             StmtKind::Toggle(s)        => self.check_toggle(s),
             StmtKind::Print(s)         => { self.check_expr(&mut s.value); }
             StmtKind::VoidCall(s)      => self.check_call_stmt(s),
-            StmtKind::Delay(_)         => { /* duration is validated syntactically */ }
+            StmtKind::Delay(s)         => self.check_delay(s),
             StmtKind::If(s)            => self.check_if_stmt(s),
             StmtKind::For(s)           => self.check_for_stmt(s),
             StmtKind::InlineDeclare(s) => self.check_inline_declare(s),
@@ -847,6 +892,9 @@ impl<'a> TypeChecker<'a> {
             InlineDeclareInit::Call(call) => {
                 self.check_call_expr(call)
             }
+            InlineDeclareInit::Expr(expr) => {
+                self.check_expr(expr)
+            }
         };
 
         // Only check type match for non-call inits — call return type
@@ -1067,24 +1115,33 @@ impl<'a> TypeChecker<'a> {
                             SymbolKind::Device { device_type, .. } => {
                                 // Look up the device type to find its interface
                                 let dt_key = device_type.key.clone();
-                                match self.symbols.lookup(&dt_key).cloned() {
+                                match self.symbols.lookup_device_type(&dt_key).cloned() {
                                     Some(def_sym) => {
                                         if let SymbolKind::DeviceType { spec } = &def_sym.kind {
                                             let interface = first_interface(spec);
                                             match interface {
                                                 Some(InterfaceType::Input)       => Type::PinState,
                                                 Some(InterfaceType::AnalogInput) => Type::AnalogRaw,
+                                                // PULSE (TRIGGER + ECHO, e.g. an
+                                                // HC-SR04 ultrasonic sensor):
+                                                // READ auto-triggers and returns
+                                                // the raw echo width in
+                                                // microseconds as Integer — unit
+                                                // conversion (e.g. to distance)
+                                                // is left to Ferrum code, same as
+                                                // ANALOG_INPUT's raw 0-1023 value.
+                                                Some(InterfaceType::Pulse)       => Type::Integer,
                                                 _ => {
                                                     self.emit(Diagnostic::error(
                                                         DiagnosticKind::TypeMismatch {
-                                                            expected: "INPUT or ANALOG_INPUT".into(),
+                                                            expected: "INPUT, ANALOG_INPUT, or PULSE".into(),
                                                             found:    interface.map(|i| i.name().to_string())
                                                                                .unwrap_or_default(),
                                                             context:  format!("READ {}", device.original),
                                                         },
                                                         expr.span.clone(),
                                                         format!(
-                                                            "READ is only valid on INPUT or ANALOG_INPUT devices. \
+                                                            "READ is only valid on INPUT, ANALOG_INPUT, or PULSE devices. \
                                                              '{}' has a different interface.",
                                                             device.original
                                                         ),
@@ -1123,7 +1180,7 @@ impl<'a> TypeChecker<'a> {
                     Some(sym) => {
                         if let SymbolKind::Device { device_type, .. } = &sym.kind {
                             let dt_key = device_type.key.clone();
-                            if let Some(def_sym) = self.symbols.lookup(&dt_key).cloned() {
+                            if let Some(def_sym) = self.symbols.lookup_device_type(&dt_key).cloned() {
                                 if let SymbolKind::DeviceType { spec } = &def_sym.kind {
                                     let interface = first_interface(spec);
                                     if !matches!(interface, Some(InterfaceType::AnalogInput)) {
@@ -1250,6 +1307,47 @@ impl<'a> TypeChecker<'a> {
                 }
                 then_ty
             }
+
+            ExprKind::Index { array, index } => {
+                let array_ty = self.check_expr(array);
+                let index_ty = self.check_expr(index);
+
+                if !matches!(index_ty, Type::Integer) {
+                    self.emit(Diagnostic::error(
+                        DiagnosticKind::TypeMismatch {
+                            expected: "Integer".into(),
+                            found:    type_name(&index_ty).into(),
+                            context:  "array index".into(),
+                        },
+                        index.span.clone(),
+                        format!(
+                            "Array index must be an Integer, found {}.",
+                            type_name(&index_ty)
+                        ),
+                        None,
+                    ));
+                }
+
+                match array_ty {
+                    Type::Array(elem, _) => *elem,
+                    other => {
+                        self.emit(Diagnostic::error(
+                            DiagnosticKind::TypeMismatch {
+                                expected: "Array".into(),
+                                found:    type_name(&other).into(),
+                                context:  "indexing '[...]'".into(),
+                            },
+                            array.span.clone(),
+                            format!(
+                                "'[...]' can only index an array, found {}.",
+                                type_name(&other)
+                            ),
+                            None,
+                        ));
+                        Type::Void
+                    }
+                }
+            }
         }
     }
 
@@ -1257,7 +1355,8 @@ impl<'a> TypeChecker<'a> {
         match op {
             // Arithmetic — both sides must be numeric, returns wider type
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                if !is_numeric(lt) {
+                if !is_numeric(lt) && !matches!((op, lt), (BinOp::Add, Type::String)) {
+                    // String + anything is string concatenation — allowed
                     self.emit(Diagnostic::error(
                         DiagnosticKind::TypeMismatch {
                             expected: "numeric type".into(),

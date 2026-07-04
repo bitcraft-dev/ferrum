@@ -177,6 +177,19 @@ impl<'a> Emitter<'a> {
             DeviceSpec::Composite(v) => v.clone(),
         };
 
+        // A PULSE device (TRIGGER + ECHO, e.g. an HC-SR04 ultrasonic
+        // sensor) is one sensor, not two independent controls like
+        // other composites (WaterPump's ENABLE + SPEED, say) — so it
+        // gets a single field of the board's FerrumPulse-implementing
+        // type instead of one field per qualifier. Generated code only
+        // ever calls the trait's `trigger_pulse`/`read_echo_us` on it;
+        // everything board-specific lives behind that trait impl (see
+        // BoardProfile::pulse_pin_type's doc comment).
+        if specs.len() == 2 && specs.iter().all(|s| s.interface == InterfaceType::Pulse) {
+            self.emit_pulse_device_struct(&struct_name);
+            return;
+        }
+
         // struct definition
         self.w.line(&format!("pub struct {} {{", struct_name));
         self.w.indent();
@@ -212,6 +225,37 @@ impl<'a> Emitter<'a> {
         }
         self.w.dedent();
         self.w.line("}");
+        self.w.dedent();
+        self.w.line("}");
+        self.w.dedent();
+        self.w.line("}");
+    }
+
+    /// Struct shape for a PULSE (TRIGGER + ECHO) composite device —
+    /// one field of the board's `FerrumPulse`-implementing type. See
+    /// `emit_device_struct`'s call site for why this differs from the
+    /// generic one-field-per-qualifier composite shape.
+    fn emit_pulse_device_struct(&mut self, struct_name: &str) {
+        let pulse_ty = self.ctx.profile.pulse_pin_type;
+
+        self.w.line(&format!("pub struct {} {{", struct_name));
+        self.w.indent();
+        self.w.line(&format!("pub pulse: {},", pulse_ty));
+        self.w.dedent();
+        self.w.line("}");
+        self.blank();
+
+        self.w.line(&format!("impl {} {{", struct_name));
+        self.w.indent();
+        self.w.line(&format!(
+            "pub fn new(trigger: {}, echo: {}) -> Self {{",
+            self.ctx.profile.output_pin_type, self.ctx.profile.analog_pin_type
+        ));
+        self.w.indent();
+        let ctor = self.ctx.profile.pulse_pin_new
+            .replace("{TRIGGER}", "trigger")
+            .replace("{ECHO}", "echo");
+        self.w.line(&format!("{} {{ pulse: {} }}", struct_name, ctor));
         self.w.dedent();
         self.w.line("}");
         self.w.dedent();
@@ -287,7 +331,9 @@ impl<'a> Emitter<'a> {
             ));
             self.w.line(&format!(
                 "const  EVERY_{}_PERIOD_MS:   u64 = {};",
-                i, block.period.as_millis()
+                // The semantic pass (E040) rejects a non-literal EVERY
+                // period before codegen ever runs, so this is always Some.
+                i, block.period.as_millis_literal().unwrap_or(0)
             ));
         }
         self.blank();
@@ -409,8 +455,20 @@ impl<'a> Emitter<'a> {
             let inst   = to_snake(&item.instance_name);
             let struct_ = to_pascal(&item.device_type);
 
+            let is_pulse = program.defines.iter().any(|d| {
+                d.name.key == item.device_type.key && match &d.spec {
+                    DeviceSpec::Composite(specs) => specs.len() == 2
+                        && specs.iter().all(|s| s.interface == InterfaceType::Pulse),
+                    DeviceSpec::Simple(_) => false,
+                }
+            });
+
             // Collect pin expressions in interface order
-            let pin_exprs = self.pin_exprs_for(item);
+            let pin_exprs = if is_pulse {
+                self.pulse_pin_exprs_for(item)
+            } else {
+                self.pin_exprs_for(item)
+            };
 
             if pin_exprs.len() == 1 {
                 self.w.line(&format!(
@@ -441,6 +499,27 @@ impl<'a> Emitter<'a> {
                     .map(|a| pin_access_tmpl.replace("{N}", &a.pin_number.to_string()))
                     .collect()
             }
+        }
+    }
+
+    /// Like `pin_exprs_for`, but for a PULSE composite: the first pin
+    /// (TRIGGER) is output-configured, the second (ECHO) is
+    /// input-configured — unlike every other composite, whose fields
+    /// all use the same output-style `pin_access` template.
+    fn pulse_pin_exprs_for(&self, item: &CreateItem) -> Vec<String> {
+        match &item.pins {
+            PinSpec::Multi(assignments) if assignments.len() == 2 => {
+                vec![
+                    self.ctx.profile.pin_access
+                        .replace("{N}", &assignments[0].pin_number.to_string()),
+                    self.ctx.profile.pin_access_input
+                        .replace("{N}", &assignments[1].pin_number.to_string()),
+                ]
+            }
+            // Malformed PULSE CREATE (wrong pin count/shape) — the
+            // semantic pass should have already rejected this; fall
+            // back to the generic path rather than panicking codegen.
+            _ => self.pin_exprs_for(item),
         }
     }
 
@@ -621,9 +700,22 @@ impl<'a> Emitter<'a> {
             }
 
             StmtKind::Delay(s) => {
-                let ms   = s.duration.as_millis();
-                let call = self.ctx.profile.delay_ms
-                    .replace("{MS}", &ms.to_string());
+                // {MS} is always substituted with a complete, already
+                // u32-typed expression string, so it's valid whether
+                // or not the board's template appends anything after it.
+                let ms_expr = match &s.duration.value {
+                    DurationValue::Literal(_) => {
+                        format!("{}u32", s.duration.as_millis_literal().unwrap_or(0))
+                    }
+                    DurationValue::Expr(expr) => {
+                        let raw = emit_expr(expr);
+                        match s.duration.unit {
+                            TimeUnit::Milliseconds => format!("({}) as u32", raw),
+                            TimeUnit::Seconds      => format!("(({}) as u32) * 1000", raw),
+                        }
+                    }
+                };
+                let call = self.ctx.profile.delay_ms.replace("{MS}", &ms_expr);
                 self.w.line(&format!("{};", call));
             }
 
@@ -699,6 +791,7 @@ impl<'a> Emitter<'a> {
                 let args    = self.format_call_args(&call.args);
                 format!("{}({})", fn_name, args)
             }
+            InlineDeclareInit::Expr(expr) => emit_expr(expr),
         };
         self.w.line(&format!("let {}: {} = {};", name, ty, val));
         // If this is a block-scoped array, emit a fill-level counter variable
@@ -750,10 +843,16 @@ fn emit_expr(expr: &Expr) -> String {
             let inst = to_snake(device);
             // INPUT → is_high() returns bool (HIGH=true, LOW=false)
             // ANALOG_INPUT → read() returns u16
+            // PULSE → auto-trigger then read the echo width in
+            // microseconds (see BoardProfile::pulse_pin_type)
             // Type is filled by semantic pass; use it to decide
             match &expr.ty {
                 Some(Type::PinState)  => format!("{}.output.is_high().unwrap()", inst),
                 Some(Type::AnalogRaw) => format!("{}.output.read()", inst),
+                Some(Type::Integer)   => format!(
+                    "{{ {i}.pulse.trigger_pulse(10).ok(); {i}.pulse.read_echo_us().unwrap_or(0) as i32 }}",
+                    i = inst
+                ),
                 _                     => format!("{}.output.is_high().unwrap()", inst),
             }
         }
@@ -837,6 +936,14 @@ fn emit_expr(expr: &Expr) -> String {
                 emit_expr(then_value),
                 emit_expr(else_value)
             )
+        }
+
+        ExprKind::Index { array, index } => {
+            // Ferrum Integer is i32; Rust array indexing needs usize.
+            // Out-of-bounds indexing panics — the same behavior Rust
+            // itself has, which is a fine answer for a language whose
+            // whole point is to lead into "real" Rust semantics.
+            format!("{}[({}) as usize]", emit_expr(array), emit_expr(index))
         }
     }
 }
@@ -1134,5 +1241,37 @@ mod rust_emit_tests {
         assert!(output.contains("pub output:"));
         assert!(output.contains("pub brightness:"));
         assert!(output.contains("pub fn new("));
+    }
+
+    #[test]
+    fn pulse_device_gets_single_field_not_one_per_qualifier() {
+        use std::sync::Arc;
+        use crate::lexer::token::{Ident, Span};
+        let span = Span::new(Arc::new("t.fe".into()), 1, 1, 1);
+        let program = Program {
+            config: None,
+            defines: vec![DefineItem {
+                name: Ident::new("Sonar", span.clone()),
+                spec: DeviceSpec::Composite(vec![
+                    InterfaceSpec { interface: InterfaceType::Pulse, qualifier: Some(Qualifier::Trigger), span: span.clone() },
+                    InterfaceSpec { interface: InterfaceType::Pulse, qualifier: Some(Qualifier::Echo),    span: span.clone() },
+                ]),
+                span: span.clone(),
+            }],
+            creates:   vec![],
+            declares:  vec![],
+            functions: vec![],
+            run:       RunSection { items: vec![], span: span.clone() },
+            span,
+        };
+        let ctx    = ctx();
+        let output = Emitter::new(&ctx).emit(&program);
+        assert!(output.contains("pub struct Sonar {"));
+        assert!(output.contains("pub pulse: "));
+        // Must NOT get one field per qualifier like other composites —
+        // that's the whole point of the special case.
+        assert!(!output.contains("pub trigger:"));
+        assert!(!output.contains("pub echo:"));
+        assert!(output.contains("pub fn new(trigger:"));
     }
 }

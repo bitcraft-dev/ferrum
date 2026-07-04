@@ -9,7 +9,7 @@
 
 #[cfg(feature = "rp2040")]
 
-use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPwm};
+use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPulse, FerrumPwm};
 
 use rp_pico::hal::gpio::{
     DynPinId, FunctionSio, SioOutput, SioInput, Pin, PullUp, PullNone,
@@ -127,6 +127,73 @@ impl FerrumDisplay for Rp2040Display {
     fn write_str(&mut self, _s: &str) -> Result<(), ()> { Ok(()) }
     fn write_int(&mut self, _n: i32)  -> Result<(), ()> { Ok(()) }
     fn clear(&mut self)               -> Result<(), ()> { Ok(()) }
+}
+
+// ── Pulse (TRIGGER + ECHO) ──────────────────────────────────────────
+//
+// Used by a PULSE composite device (e.g. an HC-SR04 ultrasonic
+// distance sensor). See microbit_v2.rs's `MicrobitPulsePin` for the
+// full design note — the `FerrumPulse` trait is the entire contract
+// generated code relies on, so each board is free to time the echo
+// pulse however suits its hardware.
+//
+// TIMING: the RP2040 is a Cortex-M0+, which has no DWT cycle counter
+// (that's an M3/M4/M7 feature) — unlike the microbit_v2 driver, this
+// uses the RP2040's own free-running hardware TIMER peripheral
+// (`rp_pico::hal::Timer`), which already counts in microseconds
+// directly, no cycles-to-time conversion needed.
+pub struct Rp2040PulsePin {
+    trigger: Pin<DynPinId, FunctionSio<SioOutput>, PullNone>,
+    echo:    Pin<DynPinId, FunctionSio<SioInput>, PullUp>,
+    timer:   rp_pico::hal::Timer,
+}
+
+impl Rp2040PulsePin {
+    pub fn new(
+        trigger: Pin<DynPinId, FunctionSio<SioOutput>, PullNone>,
+        echo:    Pin<DynPinId, FunctionSio<SioInput>, PullUp>,
+        timer:   rp_pico::hal::Timer,
+    ) -> Self {
+        Rp2040PulsePin { trigger, echo, timer }
+    }
+}
+
+/// Give up waiting for / measuring an echo after this long — see
+/// microbit_v2.rs's `TIMEOUT_US` for why.
+const TIMEOUT_US: u64 = 30_000;
+
+impl FerrumPulse for Rp2040PulsePin {
+    type Error = core::convert::Infallible;
+
+    fn trigger_pulse(&mut self, duration_us: u32) -> Result<(), Self::Error> {
+        use embedded_hal::digital::v2::OutputPin;
+        OutputPin::set_high(&mut self.trigger)?;
+        let start = self.timer.get_counter().ticks();
+        while self.timer.get_counter().ticks().wrapping_sub(start) < duration_us as u64 {}
+        OutputPin::set_low(&mut self.trigger)?;
+        Ok(())
+    }
+
+    fn read_echo_us(&mut self) -> Result<u32, Self::Error> {
+        use embedded_hal::digital::v2::InputPin;
+
+        let wait_start = self.timer.get_counter().ticks();
+        while InputPin::is_low(&self.echo)? {
+            if self.timer.get_counter().ticks().wrapping_sub(wait_start) > TIMEOUT_US {
+                return Ok(0); // no echo — sensor likely not connected
+            }
+        }
+
+        let echo_start = self.timer.get_counter().ticks();
+        while InputPin::is_high(&self.echo)? {
+            if self.timer.get_counter().ticks().wrapping_sub(echo_start) > TIMEOUT_US {
+                break; // out of range
+            }
+        }
+        let echo_end = self.timer.get_counter().ticks();
+
+        Ok(echo_end.wrapping_sub(echo_start) as u32)
+    }
 }
 
 // ── Delay ─────────────────────────────────────────────────────────

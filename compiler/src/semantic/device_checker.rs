@@ -130,7 +130,7 @@ impl<'a> DeviceChecker<'a> {
             None => return,
         };
 
-        let spec = match self.symbols.lookup(&device_type_key) {
+        let spec = match self.symbols.lookup_device_type(&device_type_key) {
             Some(sym) => match &sym.kind {
                 SymbolKind::DeviceType { spec } => spec.clone(),
                 _ => return,

@@ -590,20 +590,36 @@ pub struct LoopBlock {
     pub span: Span,
 }
 
-/// Time duration: value + unit, e.g. 500ms, 2s.
+/// A duration's value: either a compile-time literal (500ms) or a
+/// variable/expression (`DELAY on_ms ms`, where `on_ms` is an Integer
+/// parameter). EVERY's period must always be a Literal — it feeds the
+/// board's polling schedule, which is built at compile time — but
+/// DELAY accepts either. See `Duration::as_millis_literal`.
+#[derive(Debug, Clone)]
+pub enum DurationValue {
+    Literal(u32),
+    Expr(Box<Expr>),
+}
+
+/// Time duration: value + unit, e.g. 500ms, 2s, or on_ms ms.
 #[derive(Debug, Clone)]
 pub struct Duration {
-    pub value: u32,
+    pub value: DurationValue,
     pub unit:  TimeUnit,
     pub span:  Span,
 }
 
 impl Duration {
-    /// Convert to milliseconds as u64 for comparison.
-    pub fn as_millis(&self) -> u64 {
-        match self.unit {
-            TimeUnit::Milliseconds => self.value as u64,
-            TimeUnit::Seconds      => self.value as u64 * 1000,
+    /// Convert to milliseconds as u64, if this is a compile-time
+    /// literal duration. Returns None for a variable/expression
+    /// duration — there's nothing to compute until runtime.
+    pub fn as_millis_literal(&self) -> Option<u64> {
+        match &self.value {
+            DurationValue::Literal(v) => Some(match self.unit {
+                TimeUnit::Milliseconds => *v as u64,
+                TimeUnit::Seconds      => *v as u64 * 1000,
+            }),
+            DurationValue::Expr(_) => None,
         }
     }
 }
@@ -744,6 +760,8 @@ pub enum InlineDeclareInit {
     Value(InitExpr),
     /// DECLARE Integer sum = CALL add 5, 3
     Call(CallExpr),
+    /// DECLARE Boolean pressed = mode_btn IS LOW
+    Expr(Expr),
 }
 
 // ================================================================
@@ -843,6 +861,12 @@ pub enum ExprKind {
         condition:  Box<Expr>,
         then_value: Box<Expr>,
         else_value: Box<Expr>,
+    },
+
+    /// Array index: reds[colour_index]
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
     },
 }
 
@@ -1014,6 +1038,7 @@ pub trait AstVisitor {
                             if let CallArgKind::Data(e) = &arg.kind { self.visit_expr(e); }
                         }
                     }
+                    InlineDeclareInit::Expr(e) => self.visit_expr(e),
                 }
             }
             StmtKind::Turn(_)   |
@@ -1046,6 +1071,10 @@ pub trait AstVisitor {
                 self.visit_expr(condition);
                 self.visit_expr(then_value);
                 self.visit_expr(else_value);
+            }
+            ExprKind::Index { array, index } => {
+                self.visit_expr(array);
+                self.visit_expr(index);
             }
             ExprKind::Literal(_)     |
             ExprKind::Ident(_)       |
@@ -1114,10 +1143,17 @@ mod tests {
 
     #[test]
     fn duration_millis_conversion() {
-        let ms = Duration { value: 500, unit: TimeUnit::Milliseconds, span: test_span() };
-        let s  = Duration { value: 2,   unit: TimeUnit::Seconds,      span: test_span() };
-        assert_eq!(ms.as_millis(), 500);
-        assert_eq!(s.as_millis(),  2000);
+        let ms = Duration { value: DurationValue::Literal(500), unit: TimeUnit::Milliseconds, span: test_span() };
+        let s  = Duration { value: DurationValue::Literal(2),   unit: TimeUnit::Seconds,      span: test_span() };
+        assert_eq!(ms.as_millis_literal(), Some(500));
+        assert_eq!(s.as_millis_literal(),  Some(2000));
+    }
+
+    #[test]
+    fn duration_expr_has_no_literal_millis() {
+        let expr = Expr { kind: ExprKind::Ident(Ident::new("on_ms", test_span())), ty: None, span: test_span() };
+        let d = Duration { value: DurationValue::Expr(Box::new(expr)), unit: TimeUnit::Milliseconds, span: test_span() };
+        assert_eq!(d.as_millis_literal(), None);
     }
 
     // ── Literal ──────────────────────────────────────────────────

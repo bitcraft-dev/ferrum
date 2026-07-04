@@ -75,7 +75,11 @@ pub fn rust_interface_field_type(profile: &BoardProfile, iface: &crate::ast::Int
         crate::ast::InterfaceType::AnalogInput => profile.analog_pin_type,
         crate::ast::InterfaceType::Pwm         => profile.pwm_pin_type,
         crate::ast::InterfaceType::Display     => profile.display_type,
-        crate::ast::InterfaceType::Pulse       => profile.input_pin_type,
+        // A PULSE composite (TRIGGER + ECHO) is special-cased in
+        // rust_emit.rs's emit_device_struct to a single field of this
+        // type, rather than one field per qualifier like other
+        // composites — see that function for why.
+        crate::ast::InterfaceType::Pulse       => profile.pulse_pin_type,
     }
 }
 

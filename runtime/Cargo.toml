@@ -8,7 +8,7 @@ name = "ferrum_runtime"
 
 [features]
 default      = []
-microbit_v2  = ["microbit-v2", "embedded-hal"]
+microbit_v2  = ["microbit-v2", "embedded-hal", "cortex-m"]
 rp2040       = ["rp-pico", "cortex-m", "embedded-hal"]
 
 [dependencies]
@@ -17,7 +17,13 @@ rp2040       = ["rp-pico", "cortex-m", "embedded-hal"]
 
 # micro:bit v2 board support
 microbit-v2   = { version = "0.15", optional = true }
-embedded-hal  = { version = "0.2",  optional = true }
+# "unproven" gates embedded-hal 0.2's ToggleableOutputPin /
+# StatefulOutputPin / InputPin traits, which microbit_v2.rs uses.
+# NOTE: this crate still doesn't compile clean against the current
+# microbit-v2/embedded-hal releases pulled from crates.io — see
+# GAPS_AND_FOLLOWUPS.md. This feature flag is necessary but not
+# sufficient; a real embedded-hal 1.0 migration is still needed.
+embedded-hal  = { version = "0.2",  optional = true, features = ["unproven"] }
 
 # Raspberry Pi Pico board support
 rp-pico       = { version = "0.9",  optional = true }

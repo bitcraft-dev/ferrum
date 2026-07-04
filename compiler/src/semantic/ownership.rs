@@ -67,14 +67,35 @@ impl<'a> OwnershipChecker<'a> {
         let saved_lend   = std::mem::take(&mut self.lend_params);
         let saved_borrow = std::mem::take(&mut self.borrow_params);
 
+        // The type checker registers each device parameter in its own
+        // function-scoped Symbol (so TURN/SET/TOGGLE inside the body
+        // can resolve it), but that scope is popped again once the
+        // type-checking pass moves on — this pass runs afterwards, so
+        // the symbol table is back down to the global scope by the
+        // time we get here. Re-push the same per-function scope with
+        // the same device-parameter symbols so resolve_device_available
+        // can find them here too, instead of only "working" when a
+        // param name happens to collide with an unrelated global symbol.
+        use crate::semantic::symbol_table::Symbol;
+        self.symbols.push_scope(format!("function '{}' (ownership pass)", func.name.original));
+
         // Register LEND and BORROW params
         for param in &func.params {
-            if let Param::Device { ownership, name, .. } = param {
+            if let Param::Device { ownership, device_ty, name, span } = param {
                 match ownership {
                     Ownership::Lend   => { self.lend_params.insert(name.key.clone()); }
                     Ownership::Borrow => { self.borrow_params.insert(name.key.clone()); }
                     Ownership::Give   => {} // full ownership — no restriction
                 }
+                self.symbols.insert(Symbol {
+                    ident:      name.clone(),
+                    kind:       SymbolKind::Device {
+                        device_type: device_ty.clone(),
+                        state:       DeviceState::Available,
+                    },
+                    ty:         Type::Device(device_ty.clone()),
+                    defined_at: span.clone(),
+                });
             }
         }
 
@@ -82,6 +103,7 @@ impl<'a> OwnershipChecker<'a> {
             self.check_statement_ownership(stmt);
         }
 
+        self.symbols.pop_scope();
         self.lend_params   = saved_lend;
         self.borrow_params = saved_borrow;
     }

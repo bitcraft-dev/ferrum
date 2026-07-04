@@ -146,8 +146,16 @@ impl Lexer {
             '/' => self.emit_at(Token::Slash,    start_line, start_column, 1),
 
             // One-or-two character operators
+            //
+            // NOTE: `ch` above was already consumed via `advance()`, so
+            // the next not-yet-consumed character is at `self.current()`,
+            // not `self.peek()` (which looks one further ahead, at the
+            // character after that). Every other lookahead in this file
+            // calls peek()/current() before consuming the first
+            // character, where that offset is correct — this is the one
+            // spot that consumes first, so it must use current() here.
             '=' => {
-                if self.peek() == Some('=') {
+                if self.current() == Some('=') {
                     self.advance();
                     self.emit_at(Token::EqEq, start_line, start_column, 2);
                 } else {
@@ -155,7 +163,7 @@ impl Lexer {
                 }
             }
             '!' => {
-                if self.peek() == Some('=') {
+                if self.current() == Some('=') {
                     self.advance();
                     self.emit_at(Token::NotEq, start_line, start_column, 2);
                 } else {
@@ -169,7 +177,7 @@ impl Lexer {
                 }
             }
             '>' => {
-                if self.peek() == Some('=') {
+                if self.current() == Some('=') {
                     self.advance();
                     self.emit_at(Token::GtEq, start_line, start_column, 2);
                 } else {
@@ -177,7 +185,7 @@ impl Lexer {
                 }
             }
             '<' => {
-                if self.peek() == Some('=') {
+                if self.current() == Some('=') {
                     self.advance();
                     self.emit_at(Token::LtEq, start_line, start_column, 2);
                 } else {

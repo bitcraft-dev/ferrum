@@ -121,7 +121,7 @@ impl<'a> DeclarationCollector<'a> {
     // ── DEFINE ───────────────────────────────────────────────────
 
     fn collect_define(&mut self, item: &DefineItem) {
-        self.symbols.insert(Symbol {
+        self.symbols.insert_device_type(Symbol {
             ident:      item.name.clone(),
             kind:       SymbolKind::DeviceType { spec: item.spec.clone() },
             ty:         Type::Device(item.name.clone()),
@@ -133,7 +133,7 @@ impl<'a> DeclarationCollector<'a> {
 
     fn collect_create(&mut self, item: &CreateItem) {
         // Verify the device type exists
-        if self.symbols.lookup(&item.device_type.key).is_none() {
+        if self.symbols.lookup_device_type(&item.device_type.key).is_none() {
             self.diagnostics.push(Diagnostic::error(
                 DiagnosticKind::UndefinedVariable { name: item.device_type.original.clone() },
                 item.device_type.span.clone(),
@@ -249,8 +249,50 @@ mod declaration_collector_tests {
         let errs = DeclarationCollector::new(&mut st).collect(&program);
         assert!(errs.is_empty());
         assert!(matches!(
-            st.lookup("button").map(|s| &s.kind),
+            st.lookup_device_type("button").map(|s| &s.kind),
             Some(SymbolKind::DeviceType { .. })
+        ));
+    }
+
+    #[test]
+    fn instance_may_share_name_with_its_lowercased_type() {
+        // CREATE Sonar sonar ON ... must not collide with DEFINE Sonar,
+        // even though both keys lowercase to "sonar" — this is the
+        // single most natural instance-naming convention.
+        let mut st = SymbolTable::new();
+        let program = Program {
+            config: None,
+            defines: vec![DefineItem {
+                name: ident("Sonar"),
+                spec: DeviceSpec::Simple(InterfaceSpec {
+                    interface: InterfaceType::Input,
+                    qualifier: None,
+                    span: span(),
+                }),
+                span: span(),
+            }],
+            creates: vec![CreateItem {
+                device_type:   ident("Sonar"),
+                instance_name: ident("sonar"),
+                pins:          PinSpec::Single { pin: 8, span: span() },
+                pull:          None,
+                init:          None,
+                span:          span(),
+            }],
+            declares:  vec![],
+            functions: vec![],
+            run: RunSection { items: vec![], span: span() },
+            span: span(),
+        };
+        let errs = DeclarationCollector::new(&mut st).collect(&program);
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+        assert!(matches!(
+            st.lookup_device_type("sonar").map(|s| &s.kind),
+            Some(SymbolKind::DeviceType { .. })
+        ));
+        assert!(matches!(
+            st.lookup("sonar").map(|s| &s.kind),
+            Some(SymbolKind::Device { .. })
         ));
     }
 

@@ -135,9 +135,9 @@ impl Parser {
 
         let config    = if self.check(Token::Config)   { Some(self.parse_config_section()) }
                         else                           { None };
-        let defines   = self.parse_many(Token::Define,   |p| p.parse_define_item());
-        let creates   = self.parse_many(Token::Create,   |p| p.parse_create_item());
-        let declares  = self.parse_many(Token::Declare,  |p| p.parse_declare_item());
+        let defines   = self.parse_many_multi(Token::Define,   |p| p.parse_define_item());
+        let creates   = self.parse_many_multi(Token::Create,   |p| p.parse_create_item());
+        let declares  = self.parse_many_multi(Token::Declare,  |p| p.parse_declare_item());
         let functions = self.parse_many(Token::Function, |p| p.parse_function_def());
         let run       = self.parse_run_section();
         let span: Span      = start.to(&self.current_span());
@@ -213,31 +213,29 @@ impl Parser {
     //
     // define_section = "DEFINE" definition_item { "," definition_item }
 
-    fn parse_define_item(&mut self) -> Result<DefineItem, ParseError> {
+    fn parse_define_item(&mut self) -> Result<Vec<DefineItem>, ParseError> {
         let start = self.expect_token(Token::Define)?;
         let name  = self.expect_ident()?;
         self.expect_token(Token::As)?;
         let spec  = self.parse_device_spec()?;
         let span  = start.to(&self.prev_span());
+        let mut items = vec![DefineItem { name, spec, span }];
 
-        // Inline limit: if there is a comma next, check we are not
-        // in an inline context. The semantic pass enforces the hard
-        // rule; here we just continue collecting comma-separated items
-        // into a synthetic block to give better recovery.
+        // A comma continues the list with further items under the
+        // same DEFINE keyword (see e.g. examples/04_soil_moisture.fe).
         while self.consume_if(Token::Comma) {
-            // Additional items after a comma are collected and will
-            // be reported as an inline-limit error in the semantic pass.
-            // We parse them anyway so the rest of the file stays valid.
-            let _ = self.try_parse(|p| {
+            if let Some(item) = self.try_parse(|p| {
                 let n = p.expect_ident()?;
                 p.expect_token(Token::As)?;
                 let s = p.parse_device_spec()?;
                 let sp = n.span.clone().to(&p.prev_span());
                 Ok(DefineItem { name: n, spec: s, span: sp })
-            });
+            }) {
+                items.push(item);
+            }
         }
 
-        Ok(DefineItem { name, spec, span })
+        Ok(items)
     }
 
     // device_spec = interface_spec
@@ -325,7 +323,7 @@ impl Parser {
     //
     // create_section = "CREATE" creation_item { "," creation_item }
 
-    fn parse_create_item(&mut self) -> Result<CreateItem, ParseError> {
+    fn parse_create_item(&mut self) -> Result<Vec<CreateItem>, ParseError> {
         let start         = self.expect_token(Token::Create)?;
         let device_type   = self.expect_ident()?;
         let instance_name = self.expect_ident()?;
@@ -338,15 +336,17 @@ impl Parser {
                                 Some(self.parse_init_block()?)
                             } else { None };
         let span          = start.to(&self.prev_span());
+        let mut items = vec![CreateItem { device_type, instance_name, pins, pull, init, span }];
 
-        // Consume trailing commas for block-form CREATE
+        // A comma continues the list with further items under the
+        // same CREATE keyword.
         while self.consume_if(Token::Comma) {
-            // Additional items parsed and discarded here for recovery;
-            // the semantic pass validates inline-vs-block constraints.
-            let _ = self.try_parse(|p| p.parse_create_item_body());
+            if let Some(item) = self.try_parse(|p| p.parse_create_item_body()) {
+                items.push(item);
+            }
         }
 
-        Ok(CreateItem { device_type, instance_name, pins, pull, init, span })
+        Ok(items)
     }
 
     // Inner body used during comma-recovery — does not consume CREATE keyword
@@ -402,8 +402,8 @@ impl Parser {
 
         // Determine form by lookahead
         // Named form: IDENTIFIER ":"  PIN  NUMBER
-        let interface_name = if self.check_ident() && self.peek_is(Token::Colon) {
-            let name = self.expect_ident()?;
+        let interface_name = if self.check_field_name() && self.peek_is(Token::Colon) {
+            let name = self.expect_field_name()?;
             self.expect_token(Token::Colon)?;
             Some(name)
         } else {
@@ -414,8 +414,8 @@ impl Parser {
         let pin_number = self.expect_integer()? as u32;
 
         // Mixed form: optional trailing IDENTIFIER for disambiguation
-        let disambiguator = if self.check_ident() && interface_name.is_none() {
-            Some(self.expect_ident()?)
+        let disambiguator = if self.check_field_name() && interface_name.is_none() {
+            Some(self.expect_field_name()?)
         } else {
             None
         };
@@ -466,8 +466,8 @@ impl Parser {
 
     fn parse_named_init_value(&mut self) -> Result<InitEntry, ParseError> {
         let start = self.current_span();
-        let interface_name = if self.check_ident() && self.peek_is(Token::Colon) {
-            let name = self.expect_ident()?;
+        let interface_name = if self.check_field_name() && self.peek_is(Token::Colon) {
+            let name = self.expect_field_name()?;
             self.expect_token(Token::Colon)?;
             Some(name)
         } else {
@@ -508,9 +508,26 @@ impl Parser {
     //
     // declare_section = "DECLARE" declaration_item { "," declaration_item }
 
-    fn parse_declare_item(&mut self) -> Result<DeclareItem, ParseError> {
+    fn parse_declare_item(&mut self) -> Result<Vec<DeclareItem>, ParseError> {
         let start = self.expect_token(Token::Declare)?;
+        let first = self.parse_declare_item_body(start.clone())?;
+        let mut items = vec![first];
 
+        // A comma continues the list with further items under the
+        // same DECLARE keyword (see e.g. examples/02_button_toggle.fe).
+        while self.consume_if(Token::Comma) {
+            let item_start = self.current_span();
+            if let Some(item) = self.try_parse(|p| p.parse_declare_item_body(item_start.clone())) {
+                items.push(item);
+            }
+        }
+
+        Ok(items)
+    }
+
+    // Inner body used for both the first item after DECLARE and each
+    // comma-continued item — does not consume the DECLARE keyword.
+    fn parse_declare_item_body(&mut self, start: Span) -> Result<DeclareItem, ParseError> {
         // CONSTANT form
         if self.check(Token::Constant) {
             self.advance();
@@ -624,7 +641,7 @@ impl Parser {
         if let Some(ownership) = self.try_parse_ownership() {
             let device_ty = self.expect_ident()?;
             self.expect_token(Token::Colon)?;
-            let name      = self.expect_ident()?;
+            let name      = self.expect_field_name()?;
             let span      = start.to(&self.prev_span());
             return Ok(Param::Device { ownership, device_ty, name, span });
         }
@@ -632,7 +649,7 @@ impl Parser {
         // Data parameter: type name first
         let ty   = self.parse_data_type()?;
         self.expect_token(Token::Colon)?;
-        let name = self.expect_ident()?;
+        let name = self.expect_field_name()?;
         let span = start.to(&self.prev_span());
         Ok(Param::Data { ty, name, span })
     }
@@ -828,20 +845,60 @@ impl Parser {
         Ok(LoopBlock { body, span })
     }
 
-    // duration = INTEGER_LIT ( "ms" | "s" )
+    // duration = ( INTEGER_LIT | IDENTIFIER ) ( "ms" | "s" )
+    //
+    // The IDENTIFIER form (`DELAY on_ms ms`) is only meaningful for
+    // DELAY — EVERY's period feeds the board's polling schedule and
+    // must be a compile-time constant, which the semantic pass
+    // enforces (see check_every_block's literal-period check). Kept
+    // as one shared production, rather than two, because the syntax
+    // itself is identical; only the later constraint differs.
 
     fn parse_duration(&mut self) -> Result<Duration, ParseError> {
         let start = self.current_span();
-        let value = self.expect_integer()? as u32;
-        let unit  = match self.current_token() {
-            Token::Ms => { self.advance(); TimeUnit::Milliseconds }
-            Token::S  => { self.advance(); TimeUnit::Seconds      }
-            _ => return Err(ParseError::with_suggestion(
-                format!("expected time unit 'ms' or 's' after {}, found {}",
-                        value, self.current_token().describe()),
+
+        let value = if self.check(Token::IntLit(0)) {
+            let n = self.expect_integer()? as u32;
+            DurationValue::Literal(n)
+        } else if self.check_ident() {
+            let ident = self.expect_ident()?;
+            let ident_span = ident.span.clone();
+            DurationValue::Expr(Box::new(Expr {
+                kind: ExprKind::Ident(ident),
+                ty:   None,
+                span: ident_span,
+            }))
+        } else {
+            return Err(ParseError::new(
+                format!("expected a duration (integer or variable), found {}",
+                        self.current_token().describe()),
                 self.current_span(),
-                format!("Write '{}ms' or '{}s' — no space between number and unit", value, value),
-            )),
+            ));
+        };
+
+        // The lexer only recognises "ms"/"s" as Token::Ms/Token::S when
+        // they're glued directly onto a preceding number (500ms, no
+        // space). After an IDENTIFIER value there's necessarily a
+        // space, so the unit lexes as a plain Token::Ident("ms"/"s")
+        // instead — accept that form here too.
+        let unit_is_ms = self.check(Token::Ms)
+            || matches!(self.current_token(), Token::Ident(i) if i.key == "ms");
+        let unit_is_s = self.check(Token::S)
+            || matches!(self.current_token(), Token::Ident(i) if i.key == "s");
+
+        let unit = if unit_is_ms {
+            self.advance();
+            TimeUnit::Milliseconds
+        } else if unit_is_s {
+            self.advance();
+            TimeUnit::Seconds
+        } else {
+            return Err(ParseError::with_suggestion(
+                format!("expected time unit 'ms' or 's', found {}",
+                        self.current_token().describe()),
+                self.current_span(),
+                "Write e.g. '500ms', '2s', or 'on_ms ms' — no space between a literal number and its unit",
+            ));
         };
         let span = start.to(&self.prev_span());
         Ok(Duration { value, unit, span })
@@ -920,6 +977,23 @@ impl Parser {
             // DECLARE type [array] name (INIT expr | = CALL ...)
             Token::Declare => self.parse_inline_declare_stmt(),
 
+            // RETURN reached somewhere other than the tail of a
+            // function body (e.g. inside an IF/LOOP/FOR block).
+            // RETURN is only ever consumed as the trailing statement
+            // by parse_function_body — if control gets here, RETURN
+            // was misplaced. Still consume the whole statement (RETURN
+            // plus its optional value) so the parser always makes
+            // forward progress instead of looping on this token.
+            Token::Return => {
+                let ret = self.parse_return_stmt()?;
+                Err(ParseError::with_suggestion(
+                    "RETURN may only appear as the last statement in a function body",
+                    ret.span,
+                    "Move this RETURN so it is the final statement of the \
+                     FUNCTION, not nested inside an IF, LOOP, or FOR block",
+                ))
+            }
+
             // IDENTIFIER = expr   (assignment)
             // Must be last — catch-all after all keyword forms
             Token::Ident(_) => self.parse_assignment_stmt(),
@@ -960,7 +1034,7 @@ impl Parser {
 
     fn parse_set_stmt(&mut self) -> Result<Statement, ParseError> {
         let start     = self.expect_token(Token::Set)?;
-        let device    = self.expect_ident()?;
+        let device    = self.expect_field_name()?;
         let qualifier = if self.current_is_qualifier() {
             Some(self.parse_qualifier()?)
         } else { None };
@@ -976,7 +1050,7 @@ impl Parser {
 
     fn parse_turn_stmt(&mut self) -> Result<Statement, ParseError> {
         let start     = self.expect_token(Token::Turn)?;
-        let device    = self.expect_ident()?;
+        let device    = self.expect_field_name()?;
         // Optional qualifier for TURN pump ENABLE HIGH
         let qualifier = if self.current_is_qualifier() {
             Some(self.parse_qualifier()?)
@@ -1001,7 +1075,7 @@ impl Parser {
 
     fn parse_toggle_stmt(&mut self) -> Result<Statement, ParseError> {
         let start  = self.expect_token(Token::Toggle)?;
-        let device = self.expect_ident()?;
+        let device = self.expect_field_name()?;
         let span   = start.to(&self.prev_span());
         Ok(Statement {
             kind: StmtKind::Toggle(ToggleStmt { device, span: span.clone() }),
@@ -1142,16 +1216,11 @@ impl Parser {
             InlineDeclareInit::Value(self.parse_init_expr()?)
         } else if self.check(Token::Eq) {
             self.advance();
-            // Must be CALL expression
-            if !self.check(Token::Call) {
-                return Err(ParseError::with_suggestion(
-                    format!("expected CALL expression after '=', found {}",
-                            self.current_token().describe()),
-                    self.current_span(),
-                    "Use: DECLARE Integer result = CALL add 5, 3",
-                ));
+            if self.check(Token::Call) {
+                InlineDeclareInit::Call(self.parse_call_expression()?)
+            } else {
+                InlineDeclareInit::Expr(self.parse_expression()?)
             }
-            InlineDeclareInit::Call(self.parse_call_expression()?)
         } else {
             return Err(ParseError::with_suggestion(
                 format!("expected 'INIT' or '=' after variable name '{}', \
@@ -1177,6 +1246,38 @@ impl Parser {
 
     fn parse_call_arg_list(&mut self) -> Result<Vec<CallArg>, ParseError> {
         let mut args = Vec::new();
+
+        // `IF` is ambiguous immediately after a CALL: it may start an
+        // inline-IF expression argument (`CALL to_string IF flag IS
+        // TRUE { .. } ELSE { .. }`), or — when the call takes no
+        // arguments — a genuine IF *statement* right after the call.
+        // Try the expression reading first and fall back to "no
+        // arguments" (leaving the IF for statement parsing) if it
+        // doesn't parse as one.
+        //
+        // NOTE: `CALL` is deliberately NOT given the same treatment
+        // here. Unlike IF, "CALL name ..." is always syntactically
+        // valid as an expression, so a speculative attempt would
+        // never fail — two genuinely separate statements
+        // (`CALL foo` followed by `CALL bar args`) would silently be
+        // misparsed as one nested call (`CALL foo(CALL bar args)`)
+        // whenever that happened to type-check. A nested CALL used as
+        // an argument (`CALL to_percentage CALL to_decimal x`) must
+        // be written via an intermediate DECLARE instead.
+        if self.check(Token::If) {
+            return Ok(match self.try_parse_backtrack(|p| p.parse_call_arg()) {
+                Some(first) => {
+                    args.push(first);
+                    while self.consume_if(Token::Comma) {
+                        if self.call_arg_list_ends() { break; }
+                        args.push(self.parse_call_arg()?);
+                    }
+                    args
+                }
+                None => args,
+            });
+        }
+
         // No args: next token starts a new statement or closes a block
         if self.call_arg_list_ends() { return Ok(args); }
 
@@ -1388,8 +1489,27 @@ impl Parser {
                     span,
                 })
             }
-            _ => self.parse_primary_expr(),
+            _ => self.parse_postfix_expr(),
         }
+    }
+
+    // postfix_expr = primary_expr { "[" expression "]" }
+
+    fn parse_postfix_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.current_span();
+        let mut expr = self.parse_primary_expr()?;
+        while self.check(Token::LBracket) {
+            self.advance();
+            let index = self.parse_expression()?;
+            let end   = self.expect_token(Token::RBracket)?;
+            let span  = start.to(&end);
+            expr = Expr {
+                kind: ExprKind::Index { array: Box::new(expr), index: Box::new(index) },
+                ty: None,
+                span,
+            };
+        }
+        Ok(expr)
     }
 
     // primary_expr = literal | read_expr | call_expression
@@ -1623,6 +1743,54 @@ impl Parser {
         }
     }
 
+    /// The set of keyword tokens that double as composite-device field
+    /// names in named pin assignments and INIT blocks (e.g. `output:
+    /// PIN 3`, `brightness: PIN 4`). These lex as dedicated keyword
+    /// tokens rather than Token::Ident, but the words themselves are
+    /// exactly the interface/qualifier names the spec uses as field
+    /// names, so they must be accepted here too.
+    fn field_name_keyword_text(&self) -> Option<&'static str> {
+        match self.current_token() {
+            Token::Output     => Some("output"),
+            Token::Brightness => Some("brightness"),
+            Token::Speed      => Some("speed"),
+            Token::Angle      => Some("angle"),
+            Token::Red        => Some("red"),
+            Token::Green      => Some("green"),
+            Token::Blue       => Some("blue"),
+            Token::Lcd        => Some("lcd"),
+            Token::Oled       => Some("oled"),
+            Token::Trigger    => Some("trigger"),
+            Token::Echo       => Some("echo"),
+            Token::Enable     => Some("enable"),
+            _ => None,
+        }
+    }
+
+    /// True if the current token can serve as a field name: a plain
+    /// identifier, or one of the interface/qualifier keywords in
+    /// `field_name_keyword_text`.
+    fn check_field_name(&self) -> bool {
+        self.check_ident() || self.field_name_keyword_text().is_some()
+    }
+
+    /// Consume the current token as a field-name Ident. Accepts plain
+    /// identifiers and the keyword field names listed above.
+    fn expect_field_name(&mut self) -> Result<Ident, ParseError> {
+        if self.check_ident() {
+            return self.expect_ident();
+        }
+        if let Some(text) = self.field_name_keyword_text() {
+            let span = self.current_span();
+            self.advance();
+            return Ok(Ident::new(text, span));
+        }
+        Err(ParseError::new(
+            format!("expected identifier, found {}", self.current_token().describe()),
+            self.current_span(),
+        ))
+    }
+
     /// Consume the current token as an integer literal.
     fn expect_integer(&mut self) -> Result<i64, ParseError> {
         match self.current_token() {
@@ -1667,6 +1835,27 @@ impl Parser {
         }
     }
 
+    /// Like `try_parse`, but on failure rewinds the token cursor and
+    /// discards any errors `f` recorded — a true speculative attempt,
+    /// for genuinely ambiguous productions where failure should be
+    /// silent (the caller falls back to a different interpretation)
+    /// rather than reported.
+    fn try_parse_backtrack<T, F: FnOnce(&mut Self) -> Result<T, ParseError>>(
+        &mut self,
+        f: F,
+    ) -> Option<T> {
+        let saved_pos     = self.pos;
+        let saved_err_len = self.errors.len();
+        match f(self) {
+            Ok(t)  => Some(t),
+            Err(_) => {
+                self.pos = saved_pos;
+                self.errors.truncate(saved_err_len);
+                None
+            }
+        }
+    }
+
     // ── parse_many ───────────────────────────────────────────────
 
     /// Parse zero or more items that each start with `section_token`.
@@ -1679,6 +1868,26 @@ impl Parser {
             match f(self) {
                 Ok(item) => items.push(item),
                 Err(e)   => {
+                    self.errors.push(e);
+                    self.synchronise_to_section_boundary();
+                }
+            }
+        }
+        items
+    }
+
+    /// Like `parse_many`, but `f` may itself produce more than one item
+    /// per `section_token` occurrence (comma-continued DEFINE/CREATE/
+    /// DECLARE lists share one leading keyword for several items).
+    fn parse_many_multi<T, F>(&mut self, section_token: Token, mut f: F) -> Vec<T>
+    where
+        F: FnMut(&mut Self) -> Result<Vec<T>, ParseError>,
+    {
+        let mut items = Vec::new();
+        while self.check(section_token.clone()) {
+            match f(self) {
+                Ok(mut v) => items.append(&mut v),
+                Err(e)    => {
                     self.errors.push(e);
                     self.synchronise_to_section_boundary();
                 }
@@ -2017,8 +2226,21 @@ mod tests {
         let body = extract_loop_body(&p);
         match &body[0].kind {
             StmtKind::Delay(d) => {
-                assert_eq!(d.duration.value, 500);
-                assert_eq!(d.duration.unit,  TimeUnit::Milliseconds);
+                assert!(matches!(d.duration.value, DurationValue::Literal(500)));
+                assert_eq!(d.duration.unit, TimeUnit::Milliseconds);
+            }
+            _ => panic!("expected delay"),
+        }
+    }
+
+    #[test]
+    fn parse_delay_variable_duration() {
+        let p = ok("RUN { LOOP { DELAY on_ms ms } }");
+        let body = extract_loop_body(&p);
+        match &body[0].kind {
+            StmtKind::Delay(d) => {
+                assert!(matches!(&d.duration.value, DurationValue::Expr(e) if matches!(e.kind, ExprKind::Ident(_))));
+                assert_eq!(d.duration.unit, TimeUnit::Milliseconds);
             }
             _ => panic!("expected delay"),
         }
@@ -2150,6 +2372,44 @@ mod tests {
         assert!(matches!(body[0].kind, StmtKind::InlineDeclare(_)));
     }
 
+    // ── Array indexing ───────────────────────────────────────────
+
+    #[test]
+    fn parse_array_index_expression() {
+        let p = ok("RUN { LOOP { DECLARE Integer x = reds[colour_index] } }");
+        let body = extract_loop_body(&p);
+        match &body[0].kind {
+            StmtKind::InlineDeclare(s) => {
+                match &s.init {
+                    InlineDeclareInit::Expr(e) => {
+                        assert!(matches!(e.kind, ExprKind::Index { .. }));
+                    }
+                    other => panic!("expected Expr init, got {:?}", other),
+                }
+            }
+            other => panic!("expected InlineDeclare, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_chained_array_index() {
+        // reds[i][j] should nest: Index(Index(reds, i), j)
+        let p = ok("RUN { LOOP { DECLARE Integer x = grid[i][j] } }");
+        let body = extract_loop_body(&p);
+        match &body[0].kind {
+            StmtKind::InlineDeclare(s) => match &s.init {
+                InlineDeclareInit::Expr(e) => match &e.kind {
+                    ExprKind::Index { array, .. } => {
+                        assert!(matches!(array.kind, ExprKind::Index { .. }));
+                    }
+                    other => panic!("expected outer Index, got {:?}", other),
+                },
+                other => panic!("expected Expr init, got {:?}", other),
+            },
+            other => panic!("expected InlineDeclare, got {:?}", other),
+        }
+    }
+
     // ── ELSE IF detection ────────────────────────────────────────
 
     #[test]
@@ -2165,14 +2425,14 @@ mod tests {
     #[test]
     fn complete_mini_program_parses_cleanly() {
         let src = r#"
-DEFINE
-    Button AS INPUT,
-    Led AS { OUTPUT, PWM BRIGHTNESS }
-
 CONFIG {
     TARGET = "microbit_v2"
     DEBUG = TRUE
 }
+
+DEFINE
+    Button AS INPUT,
+    Led AS { OUTPUT, PWM BRIGHTNESS }
 
 CREATE
     Button mode_btn ON PIN 14,
@@ -2181,9 +2441,9 @@ CREATE
 
 DECLARE
     Boolean auto_mode INIT TRUE,
-    Percentage brightness INIT 50.0
+    Percentage brightness_level INIT 50.0
 
-FUNCTION pulse BORROW Led: led {
+FUNCTION pulse_led BORROW Led: led {
     TURN led HIGH
     DELAY 100ms
     TURN led LOW
@@ -2197,7 +2457,7 @@ RUN {
         IF mode_btn IS LOW {
             auto_mode = NOT auto_mode
         }
-        CALL pulse BORROW status
+        CALL pulse_led BORROW status
         DELAY 100ms
     }
 }

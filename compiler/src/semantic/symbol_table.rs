@@ -127,15 +127,25 @@ impl Scope {
 // ----------------------------------------------------------------
 
 pub struct SymbolTable {
-    scopes:      Vec<Scope>,
-    diagnostics: Vec<Diagnostic>,
+    scopes:       Vec<Scope>,
+    /// Device type names (from DEFINE) live in their own namespace,
+    /// separate from the scope-based variable/device-instance/function
+    /// namespace. Types and instances are referenced in grammatically
+    /// distinct positions and are never actually ambiguous to a
+    /// reader, but naming an instance the lowercase of its type — the
+    /// single most natural convention (`CREATE Sonar sonar ON ...`) —
+    /// is extremely common. Keeping them in one flat, case-insensitive
+    /// namespace would make that a spurious "already defined" error.
+    device_types: HashMap<String, Symbol>,
+    diagnostics:  Vec<Diagnostic>,
 }
 
 impl SymbolTable {
     pub fn new() -> Self {
         SymbolTable {
-            scopes:      vec![Scope::new("global")],
-            diagnostics: Vec::new(),
+            scopes:       vec![Scope::new("global")],
+            device_types: HashMap::new(),
+            diagnostics:  Vec::new(),
         }
     }
 
@@ -189,13 +199,53 @@ impl SymbolTable {
         }
     }
 
+    /// Insert a device type symbol (from DEFINE) into its own
+    /// namespace — see the `device_types` field doc comment for why
+    /// this is separate from `insert`. Still reports a duplicate error
+    /// if the same type name is DEFINEd twice.
+    pub fn insert_device_type(&mut self, symbol: Symbol) {
+        let key  = symbol.ident.key.clone();
+        let span = symbol.defined_at.clone();
+        let name = symbol.ident.original.clone();
+
+        if let Some(existing) = self.device_types.get(&key) {
+            self.diagnostics.push(Diagnostic {
+                severity:   Severity::Error,
+                kind:       DiagnosticKind::DuplicateDefinition {
+                    name:           name.clone(),
+                    first_defined:  existing.defined_at.clone(),
+                },
+                span:       span.clone(),
+                message:    format!("'{}' is already defined in this scope", name),
+                suggestion: Some(format!(
+                    "'{}' was first defined at {}. \
+                     Use a different name or remove the duplicate.",
+                    existing.ident.original, existing.defined_at
+                )),
+            });
+            return;
+        }
+
+        self.device_types.insert(key, symbol);
+    }
+
+    /// Look up a device type by name (case-insensitive). Separate from
+    /// `lookup` — see the `device_types` field doc comment.
+    pub fn lookup_device_type(&self, key: &str) -> Option<&Symbol> {
+        self.device_types.get(&key.to_lowercase())
+    }
+
     // ── Symbol lookup ─────────────────────────────────────────────
 
     /// Look up a name, searching from innermost to outermost scope.
-    /// Returns the first match or None.
+    /// Returns the first match or None. Symbols are stored under their
+    /// lowercased `Ident::key`, so the lookup key is normalised the
+    /// same way to keep resolution case-insensitive regardless of how
+    /// the caller spelled it.
     pub fn lookup(&self, key: &str) -> Option<&Symbol> {
+        let key = key.to_lowercase();
         for scope in self.scopes.iter().rev() {
-            if let Some(sym) = scope.symbols.get(key) {
+            if let Some(sym) = scope.symbols.get(key.as_str()) {
                 return Some(sym);
             }
         }
@@ -205,8 +255,9 @@ impl SymbolTable {
     /// Look up a name and return a mutable reference.
     /// Used by the ownership checker to update DeviceState.
     pub fn lookup_mut(&mut self, key: &str) -> Option<&mut Symbol> {
+        let key = key.to_lowercase();
         for scope in self.scopes.iter_mut().rev() {
-            if let Some(sym) = scope.symbols.get_mut(key) {
+            if let Some(sym) = scope.symbols.get_mut(key.as_str()) {
                 return Some(sym);
             }
         }
