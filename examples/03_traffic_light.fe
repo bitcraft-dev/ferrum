@@ -8,14 +8,14 @@
 -- Red → Green → Amber → Red ...
 -- Button triggers a pedestrian crossing (extends red phase).
 
-DEFINE Led    AS OUTPUT
-DEFINE Button AS INPUT
-
 CONFIG {
     TARGET      = "microbit_v2"
     DEBOUNCE_MS = 50
     DEBUG       = TRUE
 }
+
+DEFINE Led    AS OUTPUT
+DEFINE Button AS INPUT
 
 CREATE Led    red_led   ON PIN 10
 CREATE Led    amber_led ON PIN 11

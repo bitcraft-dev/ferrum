@@ -6,14 +6,14 @@
 -- Press the button to toggle the LED on or off.
 -- Uses edge detection so one press = one toggle.
 
-DEFINE Button AS INPUT
-DEFINE Led    AS OUTPUT
-
 CONFIG {
     TARGET      = "microbit_v2"
     DEBOUNCE_MS = 50
     DEBUG       = TRUE
 }
+
+DEFINE Button AS INPUT
+DEFINE Led    AS OUTPUT
 
 CREATE Button mode_btn ON PIN 14 PULL UP
 CREATE Led    status   ON PIN 13

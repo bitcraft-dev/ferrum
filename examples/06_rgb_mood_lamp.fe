@@ -1,11 +1,15 @@
-// Demonstrates: PWM RED/GREEN/BLUE, composite device with three
-//               PWM interfaces, BORROW with multi-interface device,
-//               smooth colour cycling using map, FOR with RANGE.
+-- Demonstrates: PWM RED/GREEN/BLUE, composite device with three
+--               PWM interfaces, BORROW with multi-interface device,
+--               smooth colour cycling using map, FOR with RANGE.
 
-/*
 -- 06_rgb_mood_lamp.fe
 -- Smoothly cycle an RGB LED through a colour sequence.
 -- Button press skips to the next colour.
+
+CONFIG {
+    TARGET      = "microbit_v2"
+    DEBOUNCE_MS = 50
+}
 
 DEFINE
     RgbLed AS {
@@ -14,11 +18,6 @@ DEFINE
         PWM BLUE
     },
     Button AS INPUT
-
-CONFIG {
-    TARGET      = "microbit_v2"
-    DEBOUNCE_MS = 50
-}
 
 CREATE
     RgbLed lamp   ON { PIN 3, PIN 4, PIN 5 } INIT { 0.0, 0.0, 0.0 },
@@ -46,7 +45,8 @@ FUNCTION fade_to BORROW RgbLed: lamp,
                   Percentage: from_r, Percentage: from_g, Percentage: from_b,
                   Percentage: to_r,   Percentage: to_g,   Percentage: to_b {
     FOR step IN RANGE 0, 20 {
-        DECLARE Percentage t = CALL to_percentage step * 5
+        DECLARE Decimal step_decimal = CALL to_decimal step * 5
+        DECLARE Percentage t = CALL to_percentage step_decimal
         DECLARE Percentage r = CALL map t, 0.0, 100.0, from_r, to_r
         DECLARE Percentage g = CALL map t, 0.0, 100.0, from_g, to_g
         DECLARE Percentage b = CALL map t, 0.0, 100.0, from_b, to_b

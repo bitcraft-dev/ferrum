@@ -2,11 +2,15 @@
 --               EVERY for distance polling, RANGE for alarm pattern,
 --               clamp and map for distance scaling.
 
-/*
 -- 07_distance_alarm.fe
 -- Sound a buzzer when an object comes within 20cm.
 -- Buzz faster as the object gets closer.
 -- Uses an HC-SR04 ultrasonic sensor.
+
+CONFIG {
+    TARGET = "microbit_v2"
+    DEBUG  = TRUE
+}
 
 DEFINE
     Sonar AS {
@@ -15,11 +19,6 @@ DEFINE
     },
     Buzzer AS OUTPUT,
     Led    AS OUTPUT
-
-CONFIG {
-    TARGET = "microbit_v2"
-    DEBUG  = TRUE
-}
 
 CREATE
     Sonar  sonar  ON { trigger: PIN 8, echo: PIN 9 },
@@ -35,7 +34,7 @@ DECLARE CONSTANT Decimal ALARM_THRESHOLD = 20.0
 DECLARE CONSTANT Decimal MIN_BUZZ_MS     = 50.0
 DECLARE CONSTANT Decimal MAX_BUZZ_MS     = 500.0
 
-FUNCTION measure_distance_cm Decimal: raw_us -> Decimal {
+FUNCTION measure_distance_cm Decimal: raw_us {
     -- Speed of sound: 343 m/s = 0.0343 cm/µs
     -- distance = (echo_us / 2) * 0.0343
     RETURN raw_us / 2.0 * 0.0343
@@ -58,16 +57,19 @@ RUN {
 
         IF distance_cm < ALARM_THRESHOLD {
             alarm_active = TRUE
-            warn = HIGH
+            TURN warn HIGH
             -- Scale buzz speed: closer = faster
             DECLARE Decimal mapped = CALL map distance_cm,
                 0.0, ALARM_THRESHOLD,
                 MIN_BUZZ_MS, MAX_BUZZ_MS
-            buzz_interval = CALL to_integer CALL clamp mapped, MIN_BUZZ_MS, MAX_BUZZ_MS
+            DECLARE Decimal clamped = CALL clamp mapped, MIN_BUZZ_MS, MAX_BUZZ_MS
+            buzz_interval = CALL to_integer clamped
         } ELSE {
             alarm_active = FALSE
             TURN warn LOW
-            TURN buzzer LOW
+            -- buzzer is owned by the LOOP block (via buzz_pattern) —
+            -- not touched here, so the two scheduled blocks never
+            -- write it at the same time (see constraint E028).
         }
     }
 

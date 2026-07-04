@@ -6,11 +6,11 @@
 -- The simplest possible Ferrum program.
 -- Flash an LED on and off once per second.
 
-DEFINE Led AS OUTPUT
-
 CONFIG {
     TARGET = "microbit_v2"
 }
+
+DEFINE Led AS OUTPUT
 
 CREATE Led status ON PIN 13
 
