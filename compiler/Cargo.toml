@@ -11,8 +11,15 @@ name = "ferrum"
 path = "src/main.rs"
 
 [dependencies]
-# No external dependencies for the core compiler pipeline.
-# The lexer, parser, semantic pass, and AST are all pure Rust.
+# The core compiler pipeline (lexer, parser, semantic pass, codegen)
+# is pure Rust with no dependencies. These four are used only by the
+# `ferrum lsp --stdio` subcommand (compiler/src/lsp/) — implementing
+# JSON-RPC framing and the LSP type system by hand wasn't worth the
+# correctness risk versus using the same crates rust-analyzer does.
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+lsp-types   = "0.95"
+lsp-server  = "0.7"
 
 [dev-dependencies]
 # No additional test dependencies beyond std.

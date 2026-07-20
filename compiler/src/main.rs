@@ -5,6 +5,7 @@
 //   ferrum check <source.fe>        Type-check only, no codegen
 //   ferrum tokens <source.fe>       Dump the token stream (debug)
 //   ferrum ast <source.fe>          Dump the parsed AST (debug)
+//   ferrum lsp --stdio              Run as a language server (see lsp/)
 //
 // EXIT CODES
 //   0  — success
@@ -16,6 +17,7 @@ use std::process;
 mod ast;
 mod diagnostics;
 mod lexer;
+mod lsp;
 mod parser;
 mod semantic;
 mod codegen;
@@ -23,11 +25,19 @@ mod codegen;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // `lsp` takes no source file — handle it before the usual
+    // subcommand/file-path parsing below expects one.
+    if args.len() >= 2 && args[1] == "lsp" {
+        lsp::run();
+        return;
+    }
+
     if args.len() < 2 {
         eprintln!("Usage: ferrum <source.fe>");
         eprintln!("       ferrum check <source.fe>");
         eprintln!("       ferrum tokens <source.fe>");
         eprintln!("       ferrum ast <source.fe>");
+        eprintln!("       ferrum lsp --stdio");
         process::exit(2);
     }
 

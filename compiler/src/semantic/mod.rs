@@ -21,8 +21,12 @@ use diagnostic::{Diagnostic, Severity};
 use symbol_table::SymbolTable;
 
 pub struct SemanticResult {
-    /// The annotated program — all Expr.ty and return_type slots filled.
-    /// None if any error was reported (program is not safe to codegen).
+    /// The annotated program — all Expr.ty and return_type slots filled,
+    /// on a best-effort basis even when errors were reported (the LSP's
+    /// hover/completion need this to work on an in-progress, currently
+    /// invalid file, not just a clean one). Codegen callers must still
+    /// check `has_errors()` themselves before treating this as safe to
+    /// emit — this is *not* a "safe to codegen" signal.
     pub program:     Option<Program>,
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -66,10 +70,8 @@ pub fn analyse(mut program: Program) -> SemanticResult {
         .check(&program);
     diagnostics.extend(errs);
 
-    let has_errors = diagnostics.iter().any(|d| d.is_error());
-
     SemanticResult {
-        program:     if has_errors { None } else { Some(program) },
+        program:     Some(program),
         diagnostics,
     }
 }
