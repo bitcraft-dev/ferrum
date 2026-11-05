@@ -3,58 +3,57 @@
 // This module provides concrete implementations of the Ferrum runtime
 // traits for the nRF52833 chip on the micro:bit v2.
 //
-// HAL CRATE: microbit-v2 = "0.15"
+// HAL CRATE: microbit-v2 = "0.15" (pulls nrf52833-hal 0.18 and
+// embedded-hal 1.0).
+//
+// EMBEDDED-HAL VERSION
+//   This board targets embedded-hal 1.0. The digital pin traits
+//   (`OutputPin`, `InputPin`, `StatefulOutputPin`) and the delay trait
+//   (`DelayNs`) all live in `embedded_hal::` (no `::v2::` / `::blocking::`
+//   modules — those were the 0.2 layout). One consequence rippling up
+//   into `traits.rs`: reading a pin's state is `&mut self` in 1.0, so
+//   `FerrumInput`/`FerrumOutput`'s read methods are `&mut self` too.
 //
 // GENERATED CODE COMPATIBILITY
-//   The emitter generates code that calls:
-//     pin.set_high().unwrap()
-//     pin.set_low().unwrap()
-//     pin.toggle().unwrap()
-//     pin.is_high().unwrap()
-//     pin.is_low().unwrap()
-//     pin.set_duty(value)
-//     pin.read()                  (analog)
-//     display.write_str("text")
+//   The emitter generates code that calls the Ferrum trait methods
+//   (set_high / set_low / toggle / is_high / is_low / set_duty / read /
+//   write_str). Each maps to the HAL method below via the trait impl,
+//   so no board-specific detail leaks into the generated program.
 //
-//   Each of these maps to the HAL method below, wrapped in the
-//   trait impl. The generated structs use `dyn FerrumOutput` etc.
-//   so the compiler knows which vtable to use.
-//
-// NOTE ON TYPES
-//   The micro:bit HAL uses `Pin<Output<PushPull>>` for outputs and
-//   `Pin<Input<PullUp>>` for inputs. These are the concrete types
-//   that implement the traits defined in traits.rs.
-
-// This file is conditionally compiled only when building for micro:bit v2.
-// The cfg gate is set by the generated Cargo.toml features section.
-#[cfg(feature = "microbit_v2")]
+// This module is compiled only when the `microbit_v2` feature is on —
+// the gate lives on `pub mod microbit_v2;` in `boards/mod.rs`, so no
+// per-item `#[cfg]` is needed (an earlier stray one gated only the
+// import beneath it, which was a latent bug).
 
 use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPulse, FerrumPwm};
 
+use microbit::hal::gpio::{Floating, Input, Output, Pin, PullUp, PushPull};
+
 // ── Output pin ────────────────────────────────────────────────────
 
-use microbit::hal::gpio::{Output, Pin, PushPull, Input, PullUp, Floating};
-
 impl FerrumOutput for Pin<Output<PushPull>> {
+    // embedded-hal 1.0's nRF pin impls are infallible.
     type Error = core::convert::Infallible;
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_high(self)
     }
 
     fn set_low(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_low(self)
     }
 
     fn toggle(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::ToggleableOutputPin;
-        ToggleableOutputPin::toggle(self)
+        // 1.0 folded the old `ToggleableOutputPin` into
+        // `StatefulOutputPin::toggle`.
+        use embedded_hal::digital::StatefulOutputPin;
+        StatefulOutputPin::toggle(self)
     }
 
-    fn is_set_high(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::StatefulOutputPin;
+    fn is_set_high(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::StatefulOutputPin;
         StatefulOutputPin::is_set_high(self)
     }
 }
@@ -64,13 +63,13 @@ impl FerrumOutput for Pin<Output<PushPull>> {
 impl FerrumInput for Pin<Input<PullUp>> {
     type Error = core::convert::Infallible;
 
-    fn is_high(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+    fn is_high(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::InputPin;
         InputPin::is_high(self)
     }
 
-    fn is_low(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+    fn is_low(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::InputPin;
         InputPin::is_low(self)
     }
 }
@@ -78,28 +77,31 @@ impl FerrumInput for Pin<Input<PullUp>> {
 // ── Analog input ──────────────────────────────────────────────────
 
 // The micro:bit HAL provides a Saadc (Successive Approximation ADC).
-// We wrap the channel read into the FerrumAnalog trait.
+// nrf-hal 0.18 replaced the old `SaadcInput` marker type + `OneShot`
+// trait with an inherent `Saadc::read_channel(&mut self, &mut PIN)`
+// over any pin implementing `saadc::Channel`, so this wrapper is now
+// generic over the channel pin type.
 
-use microbit::hal::saadc::{Saadc, SaadcConfig};
+use microbit::hal::saadc::{Channel, Saadc};
 
-pub struct MicrobitAnalogPin {
+pub struct MicrobitAnalogPin<PIN: Channel> {
     saadc:   Saadc,
-    channel: microbit::hal::saadc::SaadcInput,
+    channel: PIN,
 }
 
-impl MicrobitAnalogPin {
-    pub fn new(saadc: Saadc, channel: microbit::hal::saadc::SaadcInput) -> Self {
+impl<PIN: Channel> MicrobitAnalogPin<PIN> {
+    pub fn new(saadc: Saadc, channel: PIN) -> Self {
         MicrobitAnalogPin { saadc, channel }
     }
 }
 
-impl FerrumAnalog for MicrobitAnalogPin {
+impl<PIN: Channel> FerrumAnalog for MicrobitAnalogPin<PIN> {
     type Error = ();
 
     fn read(&mut self) -> Result<u16, Self::Error> {
-        // SAADC returns i16 (-32768..32767 for 16-bit mode).
-        // Scale to 0..1023 (10-bit equivalent) to match spec.
-        let raw: i16 = self.saadc.read(&mut self.channel).map_err(|_| ())?;
+        // SAADC returns i16. Scale to 0..1023 (10-bit equivalent) to
+        // match the spec's analog range.
+        let raw: i16 = self.saadc.read_channel(&mut self.channel).map_err(|_| ())?;
         let scaled = ((raw.max(0) as u32 * 1023) / 32767) as u16;
         Ok(scaled)
     }
@@ -107,7 +109,7 @@ impl FerrumAnalog for MicrobitAnalogPin {
 
 // ── PWM output ────────────────────────────────────────────────────
 
-use microbit::hal::pwm::{Pwm, Instance as PwmInstance};
+use microbit::hal::pwm::{Instance as PwmInstance, Pwm};
 
 pub struct MicrobitPwmChannel<T: PwmInstance> {
     pwm:      Pwm<T>,
@@ -138,8 +140,11 @@ impl<T: PwmInstance> FerrumPwm for MicrobitPwmChannel<T> {
 
 // ── Display ───────────────────────────────────────────────────────
 
-// The micro:bit v2 has a built-in 5×5 LED matrix.
-// For text output we use the microbit display driver.
+// The micro:bit v2 has a built-in 5×5 LED matrix. The blocking display
+// driver's `show` now takes a raw `[[u8; 5]; 5]` greyscale frame
+// directly (0–9 per LED) and drives its timing off any
+// `embedded_hal::delay::DelayNs` — which `Timer<TIMER1>` implements —
+// so no `GreyscaleImage` wrapper type is involved anymore.
 
 use microbit::display::blocking::Display;
 use microbit::hal::Timer;
@@ -160,18 +165,15 @@ impl FerrumDisplay for MicrobitDisplay {
     type Error = ();
 
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
-        // Scroll the string across the 5×5 matrix.
-        // Each character is displayed for 200ms.
+        // Scroll the string across the 5×5 matrix, 200ms per character.
         for ch in s.chars() {
-            let img = char_to_image(ch);
-            self.display.show(&mut self.timer, img, 200);
+            let frame = char_to_frame(ch);
+            self.display.show(&mut self.timer, frame, 200);
         }
         Ok(())
     }
 
     fn write_int(&mut self, n: i32) -> Result<(), Self::Error> {
-        // Convert integer to string and display it.
-        // Uses a small no_alloc integer formatter.
         let mut buf = [0u8; 12];
         let s = fmt_int(n, &mut buf);
         self.write_str(s)
@@ -183,23 +185,20 @@ impl FerrumDisplay for MicrobitDisplay {
     }
 }
 
-/// Minimal 5×5 LED image for a character.
-/// Full character set omitted for brevity — production build
-/// would include a complete bitmap font.
-fn char_to_image(ch: char) -> microbit::display::image::GreyscaleImage {
-    use microbit::display::image::GreyscaleImage;
+/// Minimal 5×5 greyscale frame for a character (0–9 per LED).
+/// Full character set omitted for brevity — a production build would
+/// include a complete bitmap font (see ROADMAP: micro:bit bitmap font).
+fn char_to_frame(ch: char) -> [[u8; 5]; 5] {
     match ch {
-        ' ' => GreyscaleImage::blank(),
-        _   => {
-            // Placeholder: show a dot pattern for unknown chars
-            GreyscaleImage::new(&[
-                [0, 0, 0, 0, 0],
-                [0, 9, 9, 9, 0],
-                [0, 9, 0, 9, 0],
-                [0, 9, 9, 9, 0],
-                [0, 0, 0, 0, 0],
-            ])
-        }
+        ' ' => [[0; 5]; 5],
+        // Placeholder: a hollow box for any non-space char.
+        _ => [
+            [0, 0, 0, 0, 0],
+            [0, 9, 9, 9, 0],
+            [0, 9, 0, 9, 0],
+            [0, 9, 9, 9, 0],
+            [0, 0, 0, 0, 0],
+        ],
     }
 }
 
@@ -207,12 +206,12 @@ fn char_to_image(ch: char) -> microbit::display::image::GreyscaleImage {
 
 impl FerrumDelay for microbit::hal::Delay {
     fn delay_ms(&mut self, ms: u32) {
-        use embedded_hal::blocking::delay::DelayMs;
-        DelayMs::delay_ms(self, ms);
+        use embedded_hal::delay::DelayNs;
+        DelayNs::delay_ms(self, ms);
     }
     fn delay_us(&mut self, us: u32) {
-        use embedded_hal::blocking::delay::DelayUs;
-        DelayUs::delay_us(self, us);
+        use embedded_hal::delay::DelayNs;
+        DelayNs::delay_us(self, us);
     }
 }
 
@@ -269,7 +268,7 @@ impl FerrumPulse for MicrobitPulsePin {
     type Error = core::convert::Infallible;
 
     fn trigger_pulse(&mut self, duration_us: u32) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_high(&mut self.trigger)?;
         let start = cycle_count();
         while cycle_count().wrapping_sub(start) < us_to_cycles(duration_us) {}
@@ -278,11 +277,11 @@ impl FerrumPulse for MicrobitPulsePin {
     }
 
     fn read_echo_us(&mut self) -> Result<u32, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+        use embedded_hal::digital::InputPin;
 
         // Wait for the sensor to start its echo pulse.
         let wait_start = cycle_count();
-        while InputPin::is_low(&self.echo)? {
+        while InputPin::is_low(&mut self.echo)? {
             if cycles_to_us(cycle_count().wrapping_sub(wait_start)) > TIMEOUT_US {
                 return Ok(0); // no echo — sensor likely not connected
             }
@@ -290,7 +289,7 @@ impl FerrumPulse for MicrobitPulsePin {
 
         // Measure how long it stays high.
         let echo_start = cycle_count();
-        while InputPin::is_high(&self.echo)? {
+        while InputPin::is_high(&mut self.echo)? {
             if cycles_to_us(cycle_count().wrapping_sub(echo_start)) > TIMEOUT_US {
                 break; // out of range
             }

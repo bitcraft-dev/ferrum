@@ -24,18 +24,23 @@
 /// Implemented by board support for OUTPUT interfaces.
 pub trait FerrumOutput {
     type Error;
-    fn set_high(&mut self)  -> Result<(), Self::Error>;
-    fn set_low(&mut self)   -> Result<(), Self::Error>;
-    fn toggle(&mut self)    -> Result<(), Self::Error>;
-    fn is_set_high(&self)   -> Result<bool, Self::Error>;
+    fn set_high(&mut self)     -> Result<(), Self::Error>;
+    fn set_low(&mut self)      -> Result<(), Self::Error>;
+    fn toggle(&mut self)       -> Result<(), Self::Error>;
+    // `&mut self`, not `&self`: embedded-hal 1.0 made the stateful/read
+    // pin methods take `&mut self` (a pin may need to reconfigure to
+    // read back its state), and these delegate straight to them.
+    fn is_set_high(&mut self)  -> Result<bool, Self::Error>;
 }
 
 /// Digital input pin — reads HIGH or LOW.
 /// Implemented by board support for INPUT interfaces.
 pub trait FerrumInput {
     type Error;
-    fn is_high(&self) -> Result<bool, Self::Error>;
-    fn is_low(&self)  -> Result<bool, Self::Error>;
+    // `&mut self` for the same embedded-hal 1.0 reason as
+    // `FerrumOutput::is_set_high` above.
+    fn is_high(&mut self) -> Result<bool, Self::Error>;
+    fn is_low(&mut self)  -> Result<bool, Self::Error>;
 }
 
 /// Analog input — reads a raw 0–1023 value.
@@ -95,14 +100,14 @@ mod trait_tests {
         fn set_high(&mut self)  -> Result<(), ()> { self.state = true;  Ok(()) }
         fn set_low(&mut self)   -> Result<(), ()> { self.state = false; Ok(()) }
         fn toggle(&mut self)    -> Result<(), ()> { self.state = !self.state; Ok(()) }
-        fn is_set_high(&self)   -> Result<bool, ()> { Ok(self.state) }
+        fn is_set_high(&mut self) -> Result<bool, ()> { Ok(self.state) }
     }
 
     struct MockInput  { state: bool }
     impl FerrumInput for MockInput {
         type Error = ();
-        fn is_high(&self) -> Result<bool, ()> { Ok(self.state)  }
-        fn is_low(&self)  -> Result<bool, ()> { Ok(!self.state) }
+        fn is_high(&mut self) -> Result<bool, ()> { Ok(self.state)  }
+        fn is_low(&mut self)  -> Result<bool, ()> { Ok(!self.state) }
     }
 
     struct MockAnalog { value: u16 }

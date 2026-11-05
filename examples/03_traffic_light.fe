@@ -21,14 +21,15 @@ CREATE Led    red_led   ON PIN 10
 CREATE Led    amber_led ON PIN 11
 CREATE Led    green_led ON PIN 12
 CREATE Button ped_btn   ON PIN 14 PULL UP
+create led purple_led on pin 2
 
 DECLARE
     Boolean crossing_requested INIT FALSE
 
-FUNCTION all_off BORROW Led: red, BORROW Led: amber, BORROW Led: green {
-    TURN red   LOW
+FUNCTION all_off BORROW Led: redd, BORROW Led: amber, BORROW Led: ggreen {
+    TURN redd   LOW
     TURN amber LOW
-    TURN green LOW
+    TURN ggreen LOW
 }
 
 RUN {

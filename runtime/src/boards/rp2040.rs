@@ -7,7 +7,15 @@
 // We implement the traits on the concrete bound types the emitter
 // generates (matching the type strings in BoardProfile).
 
-#[cfg(feature = "rp2040")]
+// This module is compiled only when the `rp2040` feature is on — the
+// gate lives on `pub mod rp2040;` in `boards/mod.rs`.
+//
+// EMBEDDED-HAL VERSION
+//   Digital pins and delay use embedded-hal 1.0 (matching rp2040-hal
+//   0.10). The one exception is the ADC: embedded-hal 1.0 dropped the
+//   ADC trait entirely, and rp2040-hal's `Adc::read` is still the
+//   0.2-era `OneShot` trait — so analog reads below use the 0.2 crate,
+//   pulled in under the `embedded_hal_0_2` alias (see Cargo.toml).
 
 use crate::traits::{FerrumAnalog, FerrumDelay, FerrumDisplay, FerrumInput, FerrumOutput, FerrumPulse, FerrumPwm};
 
@@ -21,22 +29,24 @@ impl FerrumOutput for Pin<DynPinId, FunctionSio<SioOutput>, PullNone> {
     type Error = core::convert::Infallible;
 
     fn set_high(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_high(self)
     }
 
     fn set_low(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_low(self)
     }
 
     fn toggle(&mut self) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::ToggleableOutputPin;
-        ToggleableOutputPin::toggle(self)
+        // 1.0 folded the old `ToggleableOutputPin` into
+        // `StatefulOutputPin::toggle`.
+        use embedded_hal::digital::StatefulOutputPin;
+        StatefulOutputPin::toggle(self)
     }
 
-    fn is_set_high(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::StatefulOutputPin;
+    fn is_set_high(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::StatefulOutputPin;
         StatefulOutputPin::is_set_high(self)
     }
 }
@@ -46,13 +56,13 @@ impl FerrumOutput for Pin<DynPinId, FunctionSio<SioOutput>, PullNone> {
 impl FerrumInput for Pin<DynPinId, FunctionSio<SioInput>, PullUp> {
     type Error = core::convert::Infallible;
 
-    fn is_high(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+    fn is_high(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::InputPin;
         InputPin::is_high(self)
     }
 
-    fn is_low(&self) -> Result<bool, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+    fn is_low(&mut self) -> Result<bool, Self::Error> {
+        use embedded_hal::digital::InputPin;
         InputPin::is_low(self)
     }
 }
@@ -77,7 +87,9 @@ impl FerrumAnalog for Rp2040AnalogPin {
     type Error = ();
 
     fn read(&mut self) -> Result<u16, Self::Error> {
-        use embedded_hal::adc::OneShot;
+        // embedded-hal 1.0 has no ADC trait; rp2040-hal's read is the
+        // 0.2-era OneShot (pulled in as `embedded_hal_0_2`).
+        use embedded_hal_0_2::adc::OneShot;
         // RP2040 ADC is 12-bit (0..4095). Scale to 0..1023.
         let raw: u16 = self.adc.read(&mut self.pin).map_err(|_| ())?;
         Ok((raw as u32 * 1023 / 4095) as u16)
@@ -166,7 +178,7 @@ impl FerrumPulse for Rp2040PulsePin {
     type Error = core::convert::Infallible;
 
     fn trigger_pulse(&mut self, duration_us: u32) -> Result<(), Self::Error> {
-        use embedded_hal::digital::v2::OutputPin;
+        use embedded_hal::digital::OutputPin;
         OutputPin::set_high(&mut self.trigger)?;
         let start = self.timer.get_counter().ticks();
         while self.timer.get_counter().ticks().wrapping_sub(start) < duration_us as u64 {}
@@ -175,17 +187,17 @@ impl FerrumPulse for Rp2040PulsePin {
     }
 
     fn read_echo_us(&mut self) -> Result<u32, Self::Error> {
-        use embedded_hal::digital::v2::InputPin;
+        use embedded_hal::digital::InputPin;
 
         let wait_start = self.timer.get_counter().ticks();
-        while InputPin::is_low(&self.echo)? {
+        while InputPin::is_low(&mut self.echo)? {
             if self.timer.get_counter().ticks().wrapping_sub(wait_start) > TIMEOUT_US {
                 return Ok(0); // no echo — sensor likely not connected
             }
         }
 
         let echo_start = self.timer.get_counter().ticks();
-        while InputPin::is_high(&self.echo)? {
+        while InputPin::is_high(&mut self.echo)? {
             if self.timer.get_counter().ticks().wrapping_sub(echo_start) > TIMEOUT_US {
                 break; // out of range
             }

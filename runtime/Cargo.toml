@@ -9,25 +9,34 @@ name = "ferrum_runtime"
 [features]
 default      = []
 microbit_v2  = ["microbit-v2", "embedded-hal", "cortex-m"]
-rp2040       = ["rp-pico", "cortex-m", "embedded-hal"]
+rp2040       = ["rp-pico", "cortex-m", "embedded-hal", "embedded-hal-0-2"]
 
 [dependencies]
 # No default dependencies — the crate is pure no_std Rust
 # when no board feature is selected (useful for host tests).
 
-# micro:bit v2 board support
-microbit-v2   = { version = "0.15", optional = true }
-# "unproven" gates embedded-hal 0.2's ToggleableOutputPin /
-# StatefulOutputPin / InputPin traits, which microbit_v2.rs uses.
-# NOTE: this crate still doesn't compile clean against the current
-# microbit-v2/embedded-hal releases pulled from crates.io — see
-# GAPS_AND_FOLLOWUPS.md. This feature flag is necessary but not
-# sufficient; a real embedded-hal 1.0 migration is still needed.
-embedded-hal  = { version = "0.2",  optional = true, features = ["unproven"] }
+# micro:bit v2 board support.
+#
+# Versions are pinned EXACTLY (`=x.y.z`) on purpose. This crate compiles
+# against board-HAL internals, so an unpinned floor (`"0.15"`) let Cargo
+# silently resolve newer point releases the board code wasn't written
+# against — which is exactly how this crate drifted into 37 build errors
+# before the embedded-hal 1.0 migration. Re-pin deliberately after
+# testing a HAL bump; don't loosen these to ranges.
+microbit-v2   = { version = "=0.15.1", optional = true }
+# embedded-hal 1.0 — matches what microbit-v2 0.15.1 / nrf52833-hal 0.18
+# themselves use. The board impls in boards/microbit_v2.rs are written
+# against the 1.0 trait layout (embedded_hal::digital::*,
+# embedded_hal::delay::DelayNs).
+embedded-hal  = { version = "=1.0.0",  optional = true }
 
 # Raspberry Pi Pico board support
-rp-pico       = { version = "0.9",  optional = true }
-cortex-m      = { version = "0.7",  optional = true }
+rp-pico       = { version = "=0.9.0",  optional = true }
+cortex-m      = { version = "=0.7.7",  optional = true }
+# rp2040-hal's ADC read is still the embedded-hal 0.2 `OneShot` trait
+# (embedded-hal 1.0 dropped ADC), so the RP2040 analog impl needs the
+# 0.2 crate alongside 1.0. Digital + delay stay on 1.0.
+embedded-hal-0-2 = { package = "embedded-hal", version = "=0.2.7", optional = true }
 
 [dev-dependencies]
 # dev-dependencies have std available — used for host-side tests
