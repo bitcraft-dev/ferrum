@@ -19,7 +19,11 @@ identical in debug and release builds (no build-profile-dependent
 wrapping). In debug builds the halt reports the source location.
 Intentional wrapping, for counters, will be an explicit built-in later.
 
+## D-004 Out-of-bounds array index (2026-11-05)
+A compile error when the index is statically known to be out of range.
+Otherwise a runtime halt (same mechanism as D-003), with the source
+location reported in debug builds. Indexing is checked against logical
+length, not only capacity.
+
 ## Open
-- Out-of-bounds array index: proposed compile error when statically
-  known, runtime halt with location otherwise. Awaiting confirmation.
 - Surface syntax for recoverable runtime errors (ROADMAP C4).
